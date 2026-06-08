@@ -566,12 +566,16 @@ export function compareSheet(
 
   // Column shifts still emit grouped events (cell-level handled via shiftCells)
   if (shiftCells.size > 0) {
-    const blocks = groupShiftBlocks(shiftCells);
-    for (const blk of blocks) {
+    const byCol = new Map<number, number>();
+    for (const k of shiftCells) {
+      const c = Number(k.split(",")[1]);
+      byCol.set(c, (byCol.get(c) ?? 0) + 1);
+    }
+    for (const [c, size] of byCol) {
       errors.push({
-        sheet: name, row: blk.row, col: blk.col,
-        cellRef: `${colLetter(blk.col)}${blk.row + 1}`,
-        expected: `(${blk.size} cells)`, actual: `column shift block`,
+        sheet: name, row: 0, col: c,
+        cellRef: `${colLetter(c)}1`,
+        expected: `(${size} cells)`, actual: `column shift block`,
         errorClass: "Column Shift",
         severity: "CRITICAL",
         penalty: SEVERITY_PENALTY.CRITICAL,
