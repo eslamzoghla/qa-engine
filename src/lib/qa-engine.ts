@@ -7,6 +7,8 @@ export type Severity = "CRITICAL" | "HIGH" | "HEADER" | "MEDIUM" | "LOW";
 export type ErrorClass =
   | "Row Shift"
   | "Column Shift"
+  | "Missing Row"
+  | "Extra Row"
   | "Missing Value"
   | "Extra Value"
   | "Range Inversion"
