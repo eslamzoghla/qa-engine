@@ -64,7 +64,7 @@ function Slot({ label, sublabel, file, onPick, accent }: SlotProps) {
 }
 
 export function UploadCard() {
-  const { setReport, config, setActiveSheet } = useQA();
+  const { setReport, config, setActiveSheet, employeeName, setEmployeeName } = useQA();
   const [fileA, setFileA] = useState<File | null>(null);
   const [fileB, setFileB] = useState<File | null>(null);
   const [running, setRunning] = useState(false);
