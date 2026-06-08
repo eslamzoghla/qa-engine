@@ -669,7 +669,7 @@ export function buildNarrative(r: WorkbookReport): string {
   const parts: string[] = [];
   parts.push(`## Executive Auditor Evaluation`);
   parts.push(
-    `Across **${r.sheets.length} evaluated sheet(s)** and **${t.comparedCells.toLocaleString()} compared cells**, the submission produced **${t.totalErrors.toLocaleString()} classified defect(s)** carrying **${t.totalPenalty} penalty points**. Weighted accuracy stands at **${t.weightedAccuracy.toFixed(2)}%** (base ${t.baseAccuracy.toFixed(2)}%), placing the worker in the **${r.grade.label}** band.`,
+    `Across **${r.sheets.length} evaluated sheet(s)** and **${t.comparedCells.toLocaleString()} compared cells**, the submission produced **${t.totalErrors.toLocaleString()} classified defect(s)** carrying **${t.totalPenalty} penalty points**. Accuracy stands at **${t.baseAccuracy.toFixed(2)}%**, placing the worker in the **${r.grade.label}** band.`,
   );
   if (top.length) {
     parts.push(`### Dominant failure modes`);
