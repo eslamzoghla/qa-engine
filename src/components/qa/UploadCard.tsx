@@ -103,6 +103,18 @@ export function UploadCard() {
         <Sparkles className="h-4 w-4 text-primary" />
         <h2 className="text-base font-semibold">New Evaluation</h2>
       </div>
+      <div className="mb-4">
+        <label className="text-[11px] uppercase tracking-wide text-muted-foreground font-medium block mb-1.5">
+          Employee Name
+        </label>
+        <input
+          type="text"
+          value={employeeName}
+          onChange={(e) => setEmployeeName(e.target.value)}
+          placeholder="e.g. Ahmed Hassan"
+          className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+        />
+      </div>
       <div className="grid md:grid-cols-2 gap-4">
         <Slot accent="indigo" label="File A — Employee Submission" sublabel="Worker / participant workbook"
               file={fileA} onPick={setFileA} />
