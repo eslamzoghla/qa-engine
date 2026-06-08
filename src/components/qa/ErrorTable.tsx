@@ -110,6 +110,6 @@ export function ErrorTable() {
 function Th({ children, className = "" }: { children: any; className?: string }) {
   return <th className={`px-3 py-2 font-medium text-muted-foreground ${className}`}>{children}</th>;
 }
-function Td({ children, className = "" }: { children: any; className?: string }) {
-  return <td className={`px-3 py-2 ${className}`}>{children}</td>;
+function Td({ children, className = "", title }: { children: any; className?: string; title?: string }) {
+  return <td className={`px-3 py-2 ${className}`} title={title}>{children}</td>;
 }
