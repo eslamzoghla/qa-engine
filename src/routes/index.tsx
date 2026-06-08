@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { ShieldCheck, FileSpreadsheet, RotateCcw } from "lucide-react";
+import { ShieldCheck, FileSpreadsheet, RotateCcw, Download, Loader2 } from "lucide-react";
 import { QAProvider, useQA } from "@/lib/qa-store";
 import { UploadCard } from "@/components/qa/UploadCard";
 import { ConfigPanel } from "@/components/qa/ConfigPanel";
@@ -11,6 +12,8 @@ import { Narrative, Coaching, Patterns } from "@/components/qa/Narrative";
 import { ErrorTable } from "@/components/qa/ErrorTable";
 import { Button } from "@/components/ui/button";
 import { Toaster } from "@/components/ui/sonner";
+import { exportElementToPDF } from "@/lib/pdf-export";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/")({
   head: () => ({
