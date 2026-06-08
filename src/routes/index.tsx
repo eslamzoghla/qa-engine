@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { ShieldCheck, FileSpreadsheet, RotateCcw } from "lucide-react";
+import { ShieldCheck, FileSpreadsheet, RotateCcw, Download, Loader2 } from "lucide-react";
 import { QAProvider, useQA } from "@/lib/qa-store";
 import { UploadCard } from "@/components/qa/UploadCard";
 import { ConfigPanel } from "@/components/qa/ConfigPanel";
@@ -11,6 +12,8 @@ import { Narrative, Coaching, Patterns } from "@/components/qa/Narrative";
 import { ErrorTable } from "@/components/qa/ErrorTable";
 import { Button } from "@/components/ui/button";
 import { Toaster } from "@/components/ui/sonner";
+import { exportElementToPDF } from "@/lib/pdf-export";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -30,7 +33,26 @@ export const Route = createFileRoute("/")({
 });
 
 function Page() {
-  const { report, setReport } = useQA();
+  const { report, setReport, employeeName } = useQA();
+  const dashboardRef = useRef<HTMLDivElement>(null);
+  const [exporting, setExporting] = useState(false);
+
+  async function handleExport() {
+    if (!dashboardRef.current) return;
+    setExporting(true);
+    try {
+      const safeName = (employeeName || "employee").replace(/[^a-z0-9\-_]+/gi, "_");
+      const stamp = new Date().toISOString().slice(0, 10);
+      await exportElementToPDF(dashboardRef.current, `qa-report_${safeName}_${stamp}.pdf`);
+      toast.success("Dashboard exported as PDF");
+    } catch (e) {
+      console.error(e);
+      toast.error("Failed to export PDF");
+    } finally {
+      setExporting(false);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-background">
       <Header />
@@ -51,21 +73,35 @@ function Page() {
           <>
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="text-xs text-muted-foreground font-mono truncate">
+                {employeeName && (
+                  <>
+                    <span className="font-semibold text-foreground">Employee:</span> {employeeName}
+                    <span className="mx-2">·</span>
+                  </>
+                )}
                 <span className="font-semibold text-foreground">A:</span> {report.metadata.fileAName}
                 <span className="mx-2">·</span>
                 <span className="font-semibold text-foreground">B:</span> {report.metadata.fileBName}
               </div>
-              <Button variant="ghost" size="sm" onClick={() => setReport(null)}>
-                <RotateCcw className="h-3.5 w-3.5 mr-1" /> New evaluation
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button size="sm" onClick={handleExport} disabled={exporting}>
+                  {exporting ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Download className="h-3.5 w-3.5 mr-1" />}
+                  {exporting ? "Exporting…" : "Download PDF"}
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => setReport(null)}>
+                  <RotateCcw className="h-3.5 w-3.5 mr-1" /> New evaluation
+                </Button>
+              </div>
             </div>
-            <Scorecard />
-            <Charts />
-            <Patterns />
-            <SheetTabs />
-            <ErrorTable />
-            <Narrative />
-            <Coaching />
+            <div ref={dashboardRef} className="space-y-6 bg-background p-2">
+              <Scorecard />
+              <Charts />
+              <Patterns />
+              <SheetTabs />
+              <ErrorTable />
+              <Narrative />
+              <Coaching />
+            </div>
           </>
         )}
       </main>
