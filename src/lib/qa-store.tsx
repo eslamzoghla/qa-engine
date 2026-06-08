@@ -9,6 +9,8 @@ interface QAStore {
   setConfig: (c: QAConfig) => void;
   activeSheet: string | null;
   setActiveSheet: (s: string | null) => void;
+  employeeName: string;
+  setEmployeeName: (n: string) => void;
 }
 
 const Ctx = createContext<QAStore | null>(null);
@@ -17,8 +19,9 @@ export function QAProvider({ children }: { children: ReactNode }) {
   const [report, setReport] = useState<WorkbookReport | null>(null);
   const [config, setConfig] = useState<QAConfig>(DEFAULT_CONFIG);
   const [activeSheet, setActiveSheet] = useState<string | null>(null);
+  const [employeeName, setEmployeeName] = useState<string>("");
   return (
-    <Ctx.Provider value={{ report, setReport, config, setConfig, activeSheet, setActiveSheet }}>
+    <Ctx.Provider value={{ report, setReport, config, setConfig, activeSheet, setActiveSheet, employeeName, setEmployeeName }}>
       {children}
     </Ctx.Provider>
   );
