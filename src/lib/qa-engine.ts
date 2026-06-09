@@ -456,6 +456,157 @@ function alignRows(
   };
 }
 
+// ---------- Column alignment recovery ----------
+// Detects single missing/extra columns the same way alignRows handles rows.
+
+function colSignature(grid: string[][], c: number, headerRows: number): string {
+  const parts: string[] = [];
+  // Include header for stronger signal, then sample body
+  for (let r = 0; r < Math.min(grid.length, headerRows + 40); r++) {
+    parts.push(normalizeText(grid[r]?.[c] ?? ""));
+  }
+  if (parts.every((p) => p === "")) return "";
+  return parts.join("\u0001");
+}
+
+function alignColumns(
+  gridA: string[][], gridB: string[][], headerRows: number,
+): { ops: AlignOp[]; recovered: boolean; missingCols: number[]; extraCols: number[]; colShift: boolean } {
+  const colsA = gridA.reduce((m, r) => Math.max(m, r.length), 0);
+  const colsB = gridB.reduce((m, r) => Math.max(m, r.length), 0);
+  const sigA: string[] = [];
+  const sigB: string[] = [];
+  for (let c = 0; c < colsA; c++) sigA.push(colSignature(gridA, c, headerRows));
+  for (let c = 0; c < colsB; c++) sigB.push(colSignature(gridB, c, headerRows));
+
+  const n = sigA.length, m = sigB.length;
+  const ops: AlignOp[] = [];
+
+  if (n === 0 || m === 0 || n * m > 200_000) {
+    const max = Math.max(n, m);
+    for (let i = 0; i < max; i++) {
+      ops.push({ a: i < n ? i : undefined, b: i < m ? i : undefined });
+    }
+    return { ops, recovered: false, missingCols: [], extraCols: [], colShift: false };
+  }
+
+  const dp: Uint16Array[] = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+  for (let i = 1; i <= n; i++) {
+    for (let j = 1; j <= m; j++) {
+      if (sigA[i - 1] !== "" && sigA[i - 1] === sigB[j - 1]) {
+        dp[i][j] = dp[i - 1][j - 1] + 1;
+      } else {
+        dp[i][j] = dp[i - 1][j] >= dp[i][j - 1] ? dp[i - 1][j] : dp[i][j - 1];
+      }
+    }
+  }
+
+  const raw: Array<{ kind: "M" | "A" | "B"; a?: number; b?: number }> = [];
+  let i = n, j = m;
+  while (i > 0 && j > 0) {
+    if (sigA[i - 1] !== "" && sigA[i - 1] === sigB[j - 1]) {
+      raw.push({ kind: "M", a: i - 1, b: j - 1 }); i--; j--;
+    } else if (dp[i - 1][j] >= dp[i][j - 1]) {
+      raw.push({ kind: "A", a: i - 1 }); i--;
+    } else {
+      raw.push({ kind: "B", b: j - 1 }); j--;
+    }
+  }
+  while (i > 0) { raw.push({ kind: "A", a: --i }); }
+  while (j > 0) { raw.push({ kind: "B", b: --j }); }
+  raw.reverse();
+
+  const merged: AlignOp[] = [];
+  const missingCols: number[] = [];
+  const extraCols: number[] = [];
+  let k = 0;
+  while (k < raw.length) {
+    if (raw[k].kind === "M") {
+      merged.push({ a: raw[k].a, b: raw[k].b });
+      k++;
+    } else {
+      const groupAs: number[] = [];
+      const groupBs: number[] = [];
+      while (k < raw.length && raw[k].kind !== "M") {
+        if (raw[k].kind === "A") groupAs.push(raw[k].a!);
+        else groupBs.push(raw[k].b!);
+        k++;
+      }
+      const pairCount = Math.min(groupAs.length, groupBs.length);
+      for (let p = 0; p < pairCount; p++) {
+        merged.push({ a: groupAs[p], b: groupBs[p] });
+      }
+      if (groupAs.length > pairCount) {
+        for (let p = pairCount; p < groupAs.length; p++) {
+          merged.push({ a: groupAs[p] });
+          extraCols.push(groupAs[p]);
+        }
+      } else if (groupBs.length > pairCount) {
+        for (let p = pairCount; p < groupBs.length; p++) {
+          merged.push({ b: groupBs[p] });
+          missingCols.push(groupBs[p]);
+        }
+      }
+    }
+  }
+
+  const totalCols = Math.max(n, m, 1);
+  const unmatched = missingCols.length + extraCols.length;
+  const recovered = unmatched > 0 && unmatched / totalCols <= 0.4;
+  return {
+    ops: merged,
+    recovered,
+    missingCols,
+    extraCols,
+    colShift: !recovered && unmatched > 0,
+  };
+}
+
+// ---------- Local within-row cell alignment ----------
+// For a matched row pair, detect single missing/extra cells that would
+// otherwise cascade into several Text/Numeric errors.
+
+function localRowAlign(
+  rowA: string[], rowB: string[],
+): { kind: "ok" | "missing" | "extra" | "shift"; offset: number; matches: number; total: number } | null {
+  const a = rowA.map((v) => normalizeText(v ?? ""));
+  const b = rowB.map((v) => normalizeText(v ?? ""));
+  const len = Math.max(a.length, b.length);
+  if (len < 4) return null;
+
+  // Count direct mismatches first
+  let direct = 0, compared = 0;
+  for (let c = 0; c < len; c++) {
+    const av = a[c] ?? "", bv = b[c] ?? "";
+    if (av === "" && bv === "") continue;
+    compared++;
+    if (av !== bv) direct++;
+  }
+  if (compared === 0 || direct < 2) return null;
+
+  // Try offsets ±1, ±2 — employee column N matches reviewer column N+offset
+  let best: { offset: number; matches: number; total: number } | null = null;
+  for (const offset of [1, -1, 2, -2]) {
+    let matches = 0, total = 0;
+    for (let c = 0; c < len; c++) {
+      const av = a[c] ?? "";
+      const bv = b[c + offset] ?? "";
+      if (av === "" && bv === "") continue;
+      total++;
+      if (av !== "" && av === bv) matches++;
+    }
+    if (total > 0 && (!best || matches / total > best.matches / best.total)) {
+      best = { offset, matches, total };
+    }
+  }
+  if (!best || best.total === 0) return null;
+  if (best.matches / best.total < 0.8) return null;
+
+  // Recovery succeeded
+  const kind = best.offset > 0 ? "missing" : "extra";
+  return { kind, offset: best.offset, matches: best.matches, total: best.total };
+}
+
 // ---------- Core comparison ----------
 
 export function colLetter(n: number): string {
