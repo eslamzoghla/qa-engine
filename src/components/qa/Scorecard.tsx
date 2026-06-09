@@ -86,6 +86,53 @@ export function Scorecard() {
         <Stat icon={Clock} label="Workload" value={`${t.workloadHours.toFixed(1)}h`}
               sub="reviewer remediation" />
       </div>
+
+      <StructuralPanel report={report} />
+    </div>
+  );
+}
+
+function StructuralPanel({ report }: { report: NonNullable<ReturnType<typeof useQA>["report"]> }) {
+  const c = report.totals.byClass;
+  const missingCols = c["Missing Column"] ?? 0;
+  const extraCols = c["Extra Column"] ?? 0;
+  const missingRows = c["Missing Row"] ?? 0;
+  const extraRows = c["Extra Row"] ?? 0;
+  const rowShifts = c["Row Shift"] ?? 0;
+  const colShifts = c["Column Shift"] ?? 0;
+  const total = missingCols + extraCols + missingRows + extraRows + rowShifts + colShifts;
+
+  return (
+    <div className="rounded-2xl bg-surface border border-border p-4 shadow-sm">
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <div className="text-[11px] uppercase tracking-wider text-muted-foreground font-medium">Structural Defects (Root Cause)</div>
+          <div className="text-xs text-muted-foreground mt-0.5">
+            Structure is validated before any cell-level comparison. Affected cells are excluded from downstream classification.
+          </div>
+        </div>
+        <div className={`text-2xl font-bold tabular-nums ${total > 0 ? "text-critical" : "text-success"}`}>
+          {total}
+        </div>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
+        <SCell label="Missing Columns" value={missingCols} />
+        <SCell label="Extra Columns" value={extraCols} />
+        <SCell label="Missing Rows" value={missingRows} />
+        <SCell label="Extra Rows" value={extraRows} />
+        <SCell label="Row Shifts" value={rowShifts} />
+        <SCell label="Column Shifts" value={colShifts} />
+      </div>
+    </div>
+  );
+}
+
+function SCell({ label, value }: { label: string; value: number }) {
+  const tone = value === 0 ? "text-muted-foreground" : "text-critical";
+  return (
+    <div className="rounded-lg border border-border bg-surface-2/40 px-3 py-2">
+      <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</div>
+      <div className={`text-lg font-semibold tabular-nums ${tone}`}>{value}</div>
     </div>
   );
 }
