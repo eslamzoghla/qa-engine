@@ -491,38 +491,15 @@ function alignColumns(
   while (j > 0) { raw.push({ kind: "B", b: --j }); }
   raw.reverse();
 
+  // Structural rule: never positionally pair unmatched A/B as a "modified"
+  // column — each leftover becomes Missing Column (B) or Extra Column (A).
   const merged: AlignOp[] = [];
   const missingCols: number[] = [];
   const extraCols: number[] = [];
-  let k = 0;
-  while (k < raw.length) {
-    if (raw[k].kind === "M") {
-      merged.push({ a: raw[k].a, b: raw[k].b });
-      k++;
-    } else {
-      const groupAs: number[] = [];
-      const groupBs: number[] = [];
-      while (k < raw.length && raw[k].kind !== "M") {
-        if (raw[k].kind === "A") groupAs.push(raw[k].a!);
-        else groupBs.push(raw[k].b!);
-        k++;
-      }
-      const pairCount = Math.min(groupAs.length, groupBs.length);
-      for (let p = 0; p < pairCount; p++) {
-        merged.push({ a: groupAs[p], b: groupBs[p] });
-      }
-      if (groupAs.length > pairCount) {
-        for (let p = pairCount; p < groupAs.length; p++) {
-          merged.push({ a: groupAs[p] });
-          extraCols.push(groupAs[p]);
-        }
-      } else if (groupBs.length > pairCount) {
-        for (let p = pairCount; p < groupBs.length; p++) {
-          merged.push({ b: groupBs[p] });
-          missingCols.push(groupBs[p]);
-        }
-      }
-    }
+  for (const r of raw) {
+    if (r.kind === "M") merged.push({ a: r.a, b: r.b });
+    else if (r.kind === "A") { merged.push({ a: r.a }); extraCols.push(r.a!); }
+    else { merged.push({ b: r.b }); missingCols.push(r.b!); }
   }
 
   const totalCols = Math.max(n, m, 1);
