@@ -624,105 +624,162 @@ export function compareSheet(
   name: string, gridA: string[][], gridB: string[][], cfg: QAConfig, strict: boolean,
 ): SheetReport {
   const headerRows = detectHeaderRows(gridB.length ? gridB : gridA);
-  const shiftCells = detectShifts(gridA, gridB, cfg);
   const cols = Math.max(
     ...gridA.map((r) => r.length), ...gridB.map((r) => r.length), 0,
   );
   const rows = Math.max(gridA.length, gridB.length);
 
-  const alignment = alignRows(gridA, gridB, headerRows);
+  // Step 1: Row alignment recovery
+  const rowAlign = alignRows(gridA, gridB, headerRows);
+  // Step 2: Column alignment recovery
+  const colAlign = alignColumns(gridA, gridB, headerRows);
+
+  // Build column lookup: when col alignment recovers, map reviewer col → employee col
+  const useColAlign = colAlign.recovered;
+  const colPairs: Array<{ a?: number; b?: number }> = useColAlign
+    ? colAlign.ops
+    : Array.from({ length: cols }, (_, c) => ({ a: c, b: c }));
+  const recoveredCols = new Set<number>();
+  if (useColAlign) for (const op of colAlign.ops) if (op.a !== undefined && op.b !== undefined) recoveredCols.add(op.a);
+
+  // Step 3: Shift detection (only as last resort, and skip columns recovered by alignment)
+  const shiftCells = useColAlign ? new Set<string>() : detectShifts(gridA, gridB, cfg);
+
   let compared = 0;
   const errors: ErrorRecord[] = [];
 
-  // If alignment was NOT recovered, emit a single Row Shift event covering the
-  // misaligned block and fall back to direct row-by-row compare.
-  const useAlignment = alignment.recovered;
-
-  if (useAlignment) {
-    for (const op of alignment.ops) {
-      // Missing Row — present in reviewer, omitted by employee
+  // Emit Missing Column / Extra Column events (once per column)
+  if (useColAlign) {
+    for (const op of colAlign.ops) {
       if (op.a === undefined && op.b !== undefined) {
-        const rowB = gridB[op.b] ?? [];
-        const nonEmpty = rowB.filter((v) => !isEmpty(v)).length;
-        if (nonEmpty === 0) continue;
-        compared += nonEmpty;
         errors.push({
-          sheet: name, row: op.b, col: 0,
-          cellRef: `${colLetter(0)}${op.b + 1}`,
-          expected: rowB.map((v) => String(v ?? "")).join(" | ").slice(0, 200),
-          actual: "(row omitted)",
-          errorClass: "Missing Row",
+          sheet: name, row: 0, col: op.b,
+          cellRef: `${colLetter(op.b)}1`,
+          expected: `(column ${colLetter(op.b)})`,
+          actual: "(column omitted)",
+          errorClass: "Missing Column",
           severity: "HIGH",
           penalty: SEVERITY_PENALTY.HIGH,
-          isHeader: false,
-          note: `Employee skipped a row that exists in the reviewer reference. Subsequent rows realigned automatically.`,
+          isHeader: true,
+          note: "Employee skipped a column present in the reviewer reference. Remaining columns realigned automatically.",
         });
-        continue;
-      }
-      // Extra Row — employee inserted a row not present in reviewer
-      if (op.b === undefined && op.a !== undefined) {
-        const rowA = gridA[op.a] ?? [];
-        const nonEmpty = rowA.filter((v) => !isEmpty(v)).length;
-        if (nonEmpty === 0) continue;
-        compared += nonEmpty;
+      } else if (op.b === undefined && op.a !== undefined) {
         errors.push({
-          sheet: name, row: op.a, col: 0,
-          cellRef: `${colLetter(0)}${op.a + 1}`,
-          expected: "(no such row)",
-          actual: rowA.map((v) => String(v ?? "")).join(" | ").slice(0, 200),
-          errorClass: "Extra Row",
+          sheet: name, row: 0, col: op.a,
+          cellRef: `${colLetter(op.a)}1`,
+          expected: "(no such column)",
+          actual: `(column ${colLetter(op.a)})`,
+          errorClass: "Extra Column",
           severity: "HIGH",
           penalty: SEVERITY_PENALTY.HIGH,
-          isHeader: false,
-          note: `Employee added a row not present in the reviewer reference. Subsequent rows realigned automatically.`,
+          isHeader: true,
+          note: "Employee added a column not present in the reviewer reference. Remaining columns realigned automatically.",
         });
-        continue;
       }
-      // Both sides present — cell-by-cell compare
-      if (op.a !== undefined && op.b !== undefined) {
-        const rA = op.a, rB = op.b;
-        for (let c = 0; c < cols; c++) {
-          const rawA = gridA[rA]?.[c] ?? "";
-          const rawB = gridB[rB]?.[c] ?? "";
-          const cellErr = classifyCell(name, rA, c, rawA, rawB, rA < headerRows, shiftCells, cfg, strict);
-          if (cellErr === "skip-empty") continue;
-          compared++;
-          if (cellErr === "match" || cellErr === "shift") continue;
-          errors.push(cellErr);
-        }
-      }
-    }
-  } else {
-    // Fall back to direct row-aligned compare (legacy behavior)
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        const rawA = gridA[r]?.[c] ?? "";
-        const rawB = gridB[r]?.[c] ?? "";
-        const cellErr = classifyCell(name, r, c, rawA, rawB, r < headerRows, shiftCells, cfg, strict);
-        if (cellErr === "skip-empty") continue;
-        compared++;
-        if (cellErr === "match" || cellErr === "shift") continue;
-        errors.push(cellErr);
-      }
-    }
-    // Emit a single Row Shift event to flag the unrecoverable misalignment
-    if (alignment.rowShift) {
-      errors.push({
-        sheet: name, row: headerRows, col: 0,
-        cellRef: `${colLetter(0)}${headerRows + 1}`,
-        expected: `(${alignment.deletedRows} missing, ${alignment.insertedRows} extra)`,
-        actual: "row block shift",
-        errorClass: "Row Shift",
-        severity: "CRITICAL",
-        penalty: SEVERITY_PENALTY.CRITICAL,
-        isHeader: false,
-        note: "Row alignment could not be recovered — block-level structural shift.",
-      });
     }
   }
 
-  // Column shifts still emit grouped events (cell-level handled via shiftCells)
-  if (shiftCells.size > 0) {
+  const useRowAlign = rowAlign.recovered;
+  const rowOps = useRowAlign
+    ? rowAlign.ops
+    : Array.from({ length: rows }, (_, r) => ({ a: r, b: r }));
+
+  const compareRowPair = (rA: number, rB: number) => {
+    // Step 3.5: per-row local cell alignment — single missing/extra cell within row
+    if (rA >= headerRows && !useColAlign) {
+      const rowA = gridA[rA] ?? [];
+      const rowB = gridB[rB] ?? [];
+      const local = localRowAlign(rowA, rowB);
+      if (local) {
+        const cls: ErrorClass = local.kind === "missing" ? "Missing Cell"
+                              : local.kind === "extra" ? "Extra Cell"
+                              : "Local Row Misalignment";
+        errors.push({
+          sheet: name, row: rA, col: 0,
+          cellRef: `${colLetter(0)}${rA + 1}`,
+          expected: rowB.map((v) => String(v ?? "")).join(" | ").slice(0, 160),
+          actual: rowA.map((v) => String(v ?? "")).join(" | ").slice(0, 160),
+          errorClass: cls,
+          severity: "MEDIUM",
+          penalty: SEVERITY_PENALTY.MEDIUM,
+          isHeader: false,
+          note: `Local cell shift (offset ${local.offset}) recovered ${local.matches}/${local.total} subsequent cells.`,
+        });
+        // Count cells as compared but do not cascade individual errors
+        compared += Math.max(rowA.length, rowB.length);
+        return;
+      }
+    }
+    for (const cop of colPairs) {
+      const cA = cop.a, cB = cop.b;
+      if (cA === undefined || cB === undefined) continue; // covered by Missing/Extra Column
+      const rawA = gridA[rA]?.[cA] ?? "";
+      const rawB = gridB[rB]?.[cB] ?? "";
+      const cellErr = classifyCell(name, rA, cA, rawA, rawB, rA < headerRows, shiftCells, cfg, strict);
+      if (cellErr === "skip-empty") continue;
+      compared++;
+      if (cellErr === "match" || cellErr === "shift") continue;
+      errors.push(cellErr);
+    }
+  };
+
+  for (const op of rowOps) {
+    if (op.a === undefined && op.b !== undefined) {
+      const rowB = gridB[op.b] ?? [];
+      const nonEmpty = rowB.filter((v) => !isEmpty(v)).length;
+      if (nonEmpty === 0) continue;
+      compared += nonEmpty;
+      errors.push({
+        sheet: name, row: op.b, col: 0,
+        cellRef: `${colLetter(0)}${op.b + 1}`,
+        expected: rowB.map((v) => String(v ?? "")).join(" | ").slice(0, 200),
+        actual: "(row omitted)",
+        errorClass: "Missing Row",
+        severity: "HIGH",
+        penalty: SEVERITY_PENALTY.HIGH,
+        isHeader: false,
+        note: "Employee skipped a row that exists in the reviewer reference. Subsequent rows realigned automatically.",
+      });
+      continue;
+    }
+    if (op.b === undefined && op.a !== undefined) {
+      const rowA = gridA[op.a] ?? [];
+      const nonEmpty = rowA.filter((v) => !isEmpty(v)).length;
+      if (nonEmpty === 0) continue;
+      compared += nonEmpty;
+      errors.push({
+        sheet: name, row: op.a, col: 0,
+        cellRef: `${colLetter(0)}${op.a + 1}`,
+        expected: "(no such row)",
+        actual: rowA.map((v) => String(v ?? "")).join(" | ").slice(0, 200),
+        errorClass: "Extra Row",
+        severity: "HIGH",
+        penalty: SEVERITY_PENALTY.HIGH,
+        isHeader: false,
+        note: "Employee added a row not present in the reviewer reference. Subsequent rows realigned automatically.",
+      });
+      continue;
+    }
+    if (op.a !== undefined && op.b !== undefined) compareRowPair(op.a, op.b);
+  }
+
+  // Row Shift fallback only when recovery failed
+  if (!useRowAlign && rowAlign.rowShift) {
+    errors.push({
+      sheet: name, row: headerRows, col: 0,
+      cellRef: `${colLetter(0)}${headerRows + 1}`,
+      expected: `(${rowAlign.deletedRows} missing, ${rowAlign.insertedRows} extra)`,
+      actual: "row block shift",
+      errorClass: "Row Shift",
+      severity: "CRITICAL",
+      penalty: SEVERITY_PENALTY.CRITICAL,
+      isHeader: false,
+      note: "Row alignment could not be recovered — block-level structural shift.",
+    });
+  }
+
+  // Column Shift fallback only when column alignment failed
+  if (!useColAlign && shiftCells.size > 0) {
     const byCol = new Map<number, number>();
     for (const k of shiftCells) {
       const c = Number(k.split(",")[1]);
@@ -737,9 +794,11 @@ export function compareSheet(
         severity: "CRITICAL",
         penalty: SEVERITY_PENALTY.CRITICAL,
         isHeader: false,
+        note: "Column alignment could not be recovered — block-level structural shift.",
       });
     }
   }
+
 
   return {
     name, rowCount: rows, colCount: cols, comparedCells: compared,
