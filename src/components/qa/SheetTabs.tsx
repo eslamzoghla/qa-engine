@@ -2,9 +2,9 @@ import { useMemo, useState } from "react";
 import { useQA } from "@/lib/qa-store";
 import { colLetter } from "@/lib/qa-engine";
 import type { SheetReport, ErrorRecord } from "@/lib/qa-engine";
-import { AlertTriangle, Eye, LayoutGrid, Columns } from "lucide-react";
+import { AlertTriangle, Eye } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { SideBySideView } from "./SideBySideView";
+import { Badge } from "@/components/ui/badge";
 
 const MAX_ROWS = 150;
 const MAX_COLS = 35;
@@ -64,7 +64,7 @@ export function SheetTabs() {
 }
 
 function SheetView({ sheet }: { sheet: SheetReport }) {
-  const [view, setView] = useState<"employee" | "reviewer" | "split">("employee");
+  const [view, setView] = useState<"employee" | "reviewer">("employee");
   const errorMap = useMemo(() => {
     const m = new Map<string, ErrorRecord>();
     for (const e of sheet.errors) {
@@ -94,37 +94,24 @@ function SheetView({ sheet }: { sheet: SheetReport }) {
         </div>
         <div className="flex items-center gap-2">
           <div className="inline-flex rounded-md border border-border bg-surface-2 p-0.5">
-            <button onClick={() => setView("employee")}
-              className={`px-2.5 py-1 text-xs font-medium rounded flex items-center gap-1.5 ${
-                view === "employee" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-surface-3"
-              }`}>
-              <LayoutGrid className="h-3 w-3" /> File A
-            </button>
-            <button onClick={() => setView("reviewer")}
-              className={`px-2.5 py-1 text-xs font-medium rounded flex items-center gap-1.5 ${
-                view === "reviewer" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-surface-3"
-              }`}>
-              <LayoutGrid className="h-3 w-3" /> File B
-            </button>
-            <button onClick={() => setView("split")}
-              className={`px-2.5 py-1 text-xs font-medium rounded flex items-center gap-1.5 ${
-                view === "split" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-surface-3"
-              }`}>
-              <Columns className="h-3 w-3" /> Split View
-            </button>
+            {(["employee", "reviewer"] as const).map((v) => (
+              <button key={v} onClick={() => setView(v)}
+                className={`px-2.5 py-1 text-xs font-medium rounded ${
+                  view === v ? "bg-primary text-primary-foreground" : "text-muted-foreground"
+                }`}>
+                {v === "employee" ? "File A" : "File B"}
+              </button>
+            ))}
           </div>
           <Legend />
         </div>
       </div>
-      {cropped && view !== "split" && (
+      {cropped && (
         <div className="flex items-center gap-2 px-4 py-2 bg-medium/10 border-b border-medium/20 text-xs text-medium">
           <Eye className="h-3.5 w-3.5" />
           Visual viewport cropped to {rows}×{cols}. Metrics still computed across full {totalRows}×{totalCols}.
         </div>
       )}
-      {view === "split" ? (
-        <SideBySideView sheet={sheet} />
-      ) : (
       <div className="overflow-auto max-h-[600px]">
         <table className="text-xs font-mono border-separate border-spacing-0">
           <thead className="sticky top-0 z-10 bg-surface-2">
@@ -158,7 +145,6 @@ function SheetView({ sheet }: { sheet: SheetReport }) {
           </tbody>
         </table>
       </div>
-      )}
     </div>
   );
 }

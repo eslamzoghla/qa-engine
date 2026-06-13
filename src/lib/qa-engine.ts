@@ -37,9 +37,6 @@ export interface ErrorRecord {
   cellRef: string;
   expected: string;
   actual: string;
-  normalizedExpected: string;
-  normalizedActual: string;
-  similarityPercentage: number;
   errorClass: ErrorClass;
   severity: Severity;
   penalty: number;
@@ -75,7 +72,7 @@ export const DEFAULT_CONFIG: QAConfig = {
   numericMajorVariance: 0.2,
   numericMajorAbsolute: 100,
   numericTolerance: 0.01,
-  numericToleranceMode: "ABSOLUTE",
+  numericToleranceMode: "PERCENTAGE",
   minimumShiftCells: 20,
   shiftDetectionThreshold: 0.8,
   headerPenalty: 3,
@@ -102,6 +99,7 @@ export function normalizeArabic(s: string): string {
     .replace(/ى/g, "ي")
     .replace(/ؤ/g, "و")
     .replace(/ئ/g, "ي")
+    .replace(/ة/g, "ه")
     .replace(ARABIC_DIACRITICS, "");
 }
 
@@ -147,19 +145,11 @@ export function parseRange(s: string): [string, string, string] | null {
 
 // ---------- Similarity ----------
 
-const LEV_CACHE = new Map<string, number>();
-
 export function levenshtein(a: string, b: string): number {
   if (a === b) return 0;
   if (!a.length) return b.length;
   if (!b.length) return a.length;
-
-  const key = a.length <= b.length ? `${a}\u0000${b}` : `${b}\u0000${a}`;
-  if (LEV_CACHE.has(key)) return LEV_CACHE.get(key)!;
-
-  const dp = new Int32Array(b.length + 1);
-  for (let j = 0; j <= b.length; j++) dp[j] = j;
-
+  const dp = Array.from({ length: b.length + 1 }, (_, i) => i);
   for (let i = 1; i <= a.length; i++) {
     let prev = dp[0];
     dp[0] = i;
@@ -169,9 +159,7 @@ export function levenshtein(a: string, b: string): number {
       prev = tmp;
     }
   }
-  const res = dp[b.length];
-  if (LEV_CACHE.size < 10000) LEV_CACHE.set(key, res);
-  return res;
+  return dp[b.length];
 }
 
 export function similarity(a: string, b: string): number {
@@ -385,21 +373,14 @@ function alignRows(
     return { ops, recovered: false, insertedRows: 0, deletedRows: 0, rowShift: false };
   }
 
-  // LCS — only non-empty signatures can match (prevents pairing two blank rows).
-  // Note: Full N*M table is required for backtracking alignment path.
-  // We use a single Uint32Array to minimize object overhead.
-  const dp = new Uint32Array((n + 1) * (m + 1));
-  const get = (r: number, c: number) => dp[r * (m + 1) + c];
-  const set = (r: number, c: number, v: number) => { dp[r * (m + 1) + c] = v; };
-
+  // LCS — only non-empty signatures can match (prevents pairing two blank rows)
+  const dp: Uint32Array[] = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
   for (let i = 1; i <= n; i++) {
     for (let j = 1; j <= m; j++) {
       if (sigA[i - 1] !== "" && sigA[i - 1] === sigB[j - 1]) {
-        set(i, j, get(i - 1, j - 1) + 1);
+        dp[i][j] = dp[i - 1][j - 1] + 1;
       } else {
-        const v1 = get(i - 1, j);
-        const v2 = get(i, j - 1);
-        set(i, j, v1 >= v2 ? v1 : v2);
+        dp[i][j] = dp[i - 1][j] >= dp[i][j - 1] ? dp[i - 1][j] : dp[i][j - 1];
       }
     }
   }
@@ -411,7 +392,7 @@ function alignRows(
     if (sigA[i - 1] !== "" && sigA[i - 1] === sigB[j - 1]) {
       raw.push({ kind: "M", a: i - 1 + headerMax, b: j - 1 + headerMax });
       i--; j--;
-    } else if (get(i - 1, j) >= get(i, j - 1)) {
+    } else if (dp[i - 1][j] >= dp[i][j - 1]) {
       raw.push({ kind: "A", a: i - 1 + headerMax });
       i--;
     } else {
@@ -649,9 +630,6 @@ export function compareSheet(
           cellRef: `${colLetter(op.b)}1`,
           expected: `(column ${colLetter(op.b)})`,
           actual: "(column omitted)",
-          normalizedExpected: `(column ${colLetter(op.b)})`,
-          normalizedActual: "(column omitted)",
-          similarityPercentage: 0,
           errorClass: "Missing Column",
           severity: "CRITICAL",
           penalty: SEVERITY_PENALTY.CRITICAL,
@@ -664,9 +642,6 @@ export function compareSheet(
           cellRef: `${colLetter(op.a)}1`,
           expected: "(no such column)",
           actual: `(column ${colLetter(op.a)})`,
-          normalizedExpected: "(no such column)",
-          normalizedActual: `(column ${colLetter(op.a)})`,
-          similarityPercentage: 0,
           errorClass: "Extra Column",
           severity: "CRITICAL",
           penalty: SEVERITY_PENALTY.CRITICAL,
@@ -697,9 +672,6 @@ export function compareSheet(
           cellRef: `${colLetter(0)}${rA + 1}`,
           expected: rowB.map((v) => String(v ?? "")).join(" | ").slice(0, 160),
           actual: rowA.map((v) => String(v ?? "")).join(" | ").slice(0, 160),
-          normalizedExpected: rowB.map((v) => normalizeText(v)).join(" | ").slice(0, 160),
-          normalizedActual: rowA.map((v) => normalizeText(v)).join(" | ").slice(0, 160),
-          similarityPercentage: local.matches / local.total * 100,
           errorClass: cls,
           severity: "MEDIUM",
           penalty: SEVERITY_PENALTY.MEDIUM,
@@ -735,9 +707,6 @@ export function compareSheet(
         cellRef: `${colLetter(0)}${op.b + 1}`,
         expected: rowB.map((v) => String(v ?? "")).join(" | ").slice(0, 200),
         actual: "(row omitted)",
-        normalizedExpected: rowB.map((v) => normalizeText(v)).join(" | ").slice(0, 200),
-        normalizedActual: "(row omitted)",
-        similarityPercentage: 0,
         errorClass: "Missing Row",
         severity: "CRITICAL",
         penalty: SEVERITY_PENALTY.CRITICAL,
@@ -756,9 +725,6 @@ export function compareSheet(
         cellRef: `${colLetter(0)}${op.a + 1}`,
         expected: "(no such row)",
         actual: rowA.map((v) => String(v ?? "")).join(" | ").slice(0, 200),
-        normalizedExpected: "(no such row)",
-        normalizedActual: rowA.map((v) => normalizeText(v)).join(" | ").slice(0, 200),
-        similarityPercentage: 0,
         errorClass: "Extra Row",
         severity: "CRITICAL",
         penalty: SEVERITY_PENALTY.CRITICAL,
@@ -777,9 +743,6 @@ export function compareSheet(
       cellRef: `${colLetter(0)}${headerRows + 1}`,
       expected: `(${rowAlign.deletedRows} missing, ${rowAlign.insertedRows} extra)`,
       actual: "row block shift",
-      normalizedExpected: `(${rowAlign.deletedRows} missing, ${rowAlign.insertedRows} extra)`,
-      normalizedActual: "row block shift",
-      similarityPercentage: 0,
       errorClass: "Row Shift",
       severity: "CRITICAL",
       penalty: SEVERITY_PENALTY.CRITICAL,
@@ -799,11 +762,7 @@ export function compareSheet(
       errors.push({
         sheet: name, row: 0, col: c,
         cellRef: `${colLetter(c)}1`,
-        expected: `(${size} cells)`,
-        actual: `column shift block`,
-        normalizedExpected: `(${size} cells)`,
-        normalizedActual: `column shift block`,
-        similarityPercentage: 0,
+        expected: `(${size} cells)`, actual: `column shift block`,
         errorClass: "Column Shift",
         severity: "CRITICAL",
         penalty: SEVERITY_PENALTY.CRITICAL,
@@ -863,11 +822,7 @@ function classifyCell(
   return {
     sheet: name, row: r, col: c,
     cellRef: `${colLetter(c)}${r + 1}`,
-    expected: String(rawB),
-    actual: String(rawA),
-    normalizedExpected: b,
-    normalizedActual: a,
-    similarityPercentage: similarity(a, b) * 100,
+    expected: String(rawB), actual: String(rawA),
     errorClass: rec.cls, severity: rec.severity, penalty,
     isHeader, note: rec.note,
   };
@@ -896,8 +851,6 @@ export interface WorkbookReport {
     copyPaste: Array<{ value: string; count: number }>;
     clusters: Array<{ sheet: string; rowStart: number; rowEnd: number; count: number }>;
     digitSwaps: Array<{ from: string; to: string; count: number }>;
-    highRiskSheets: Array<{ name: string; errorRate: number; errorCount: number }>;
-    mergesSplits: Array<{ type: "MERGE" | "SPLIT"; sheets: string[]; target: string }>;
   };
   metadata: {
     fileAName: string;
@@ -912,37 +865,31 @@ export function detectStrict(name: string, mode: QAConfig["strictMode"]): boolea
   return /census|financial|budget|survey|stat|tax/i.test(name);
 }
 
-export async function compareWorkbooks(
+export function compareWorkbooks(
   fileA: { name: string; wb: XLSX.WorkBook },
   fileB: { name: string; wb: XLSX.WorkBook },
   config: QAConfig,
-  onProgress?: (p: number) => void
-): Promise<WorkbookReport> {
+): WorkbookReport {
   const sheets: SheetReport[] = [];
   const excluded: Array<{ name: string; reason: string }> = [];
   const strict = detectStrict(`${fileA.name} ${fileB.name}`, config.strictMode);
 
   const names = Array.from(new Set([...fileA.wb.SheetNames, ...fileB.wb.SheetNames]));
-  let processed = 0;
   for (const name of names) {
     const wsA = fileA.wb.Sheets[name];
     const wsB = fileB.wb.Sheets[name];
     if (!wsA || !wsB) {
       excluded.push({ name, reason: `Missing in ${!wsA ? "Employee" : "Reviewer"} workbook` });
-    } else {
-      const gridA = sheetToGrid(wsA);
-      const gridB = sheetToGrid(wsB);
-      const reason = shouldExcludeSheet(name, Math.max(gridA.length, gridB.length));
-      if (reason) {
-        excluded.push({ name, reason });
-      } else {
-        sheets.push(compareSheet(name, gridA, gridB, config, strict));
-      }
+      continue;
     }
-    processed++;
-    onProgress?.(processed / names.length);
-    // Yield to UI thread
-    await new Promise((r) => setTimeout(r, 0));
+    const gridA = sheetToGrid(wsA);
+    const gridB = sheetToGrid(wsB);
+    const reason = shouldExcludeSheet(name, Math.max(gridA.length, gridB.length));
+    if (reason) {
+      excluded.push({ name, reason });
+      continue;
+    }
+    sheets.push(compareSheet(name, gridA, gridB, config, strict));
   }
 
   // Aggregate
@@ -970,52 +917,10 @@ export async function compareWorkbooks(
     bySeverity.MEDIUM * 0.25 + bySeverity.LOW * 0.05;
 
   // Grade
-  const grade = computeGrade(baseAccuracy, bySeverity);
+  const grade = computeGrade(weightedAccuracy, bySeverity);
 
   // Patterns
-  const patterns = detectPatterns(allErrors, sheets);
-
-  // Table Merge/Split Detection
-  const unmatchedA = names.filter(n => !fileB.wb.Sheets[n] && fileA.wb.Sheets[n]);
-  const unmatchedB = names.filter(n => !fileA.wb.Sheets[n] && fileB.wb.Sheets[n]);
-  const mergesSplits: WorkbookReport["patterns"]["mergesSplits"] = [];
-
-  for (const nameA of unmatchedA) {
-    const wsA = fileA.wb.Sheets[nameA];
-    const gridA = sheetToGrid(wsA);
-    const sigA = gridA.slice(0, 10).map(r => rowSignature(r)).join("");
-
-    // Potential SPLIT: sheet in A's content found in multiple sheets of B
-    const splitCandidates = unmatchedB.filter(nameB => {
-      const wsB = fileB.wb.Sheets[nameB];
-      const gridB = sheetToGrid(wsB);
-      const sigB = gridB.slice(0, 10).map(r => rowSignature(r)).join("");
-      return sigA.includes(sigB) || sigB.includes(sigA);
-    });
-
-    if (splitCandidates.length >= 2) {
-      mergesSplits.push({ type: "SPLIT", sheets: splitCandidates, target: nameA });
-    }
-  }
-
-  for (const nameB of unmatchedB) {
-    const wsB = fileB.wb.Sheets[nameB];
-    const gridB = sheetToGrid(wsB);
-    const sigB = gridB.slice(0, 10).map(r => rowSignature(r)).join("");
-
-    // Potential MERGE: multiple sheets in A merged into one sheet of B
-    const mergeCandidates = unmatchedA.filter(nameA => {
-      const wsA = fileA.wb.Sheets[nameA];
-      const gridA = sheetToGrid(wsA);
-      const sigA = gridA.slice(0, 10).map(r => rowSignature(r)).join("");
-      return sigB.includes(sigA) || sigA.includes(sigB);
-    });
-
-    if (mergeCandidates.length >= 2) {
-      mergesSplits.push({ type: "MERGE", sheets: mergeCandidates, target: nameB });
-    }
-  }
-  patterns.mergesSplits = mergesSplits;
+  const patterns = detectPatterns(allErrors);
 
   return {
     config, strictMode: strict, sheets, excludedSheets: excluded,
@@ -1033,7 +938,7 @@ export async function compareWorkbooks(
   };
 }
 
-function computeGrade(accuracy: number, sev: Record<Severity, number>): WorkbookReport["grade"] {
+function computeGrade(weighted: number, sev: Record<Severity, number>): WorkbookReport["grade"] {
   const tiers: Array<{ label: string; tier: number; min: number }> = [
     { label: "Outstanding", tier: 7, min: 99.9 },
     { label: "Excellent", tier: 6, min: 99 },
@@ -1044,8 +949,8 @@ function computeGrade(accuracy: number, sev: Record<Severity, number>): Workbook
     { label: "Poor", tier: 1, min: 0 },
   ];
   let pick = tiers[tiers.length - 1];
-  for (const t of tiers) if (accuracy >= t.min) { pick = t; break; }
-  const rationale: string[] = [`Base accuracy ${accuracy.toFixed(2)}%`];
+  for (const t of tiers) if (weighted >= t.min) { pick = t; break; }
+  const rationale: string[] = [`Weighted accuracy ${weighted.toFixed(2)}%`];
   const hasShift = sev.CRITICAL > 0;
   if (hasShift && pick.tier > 2) {
     rationale.push("Override: structural shift detected — capped at Needs Improvement");
@@ -1058,10 +963,7 @@ function computeGrade(accuracy: number, sev: Record<Severity, number>): Workbook
   return { label: pick.label, tier: pick.tier, rationale };
 }
 
-function detectPatterns(
-  errors: ErrorRecord[],
-  sheets: SheetReport[],
-): WorkbookReport["patterns"] {
+function detectPatterns(errors: ErrorRecord[]): WorkbookReport["patterns"] {
   // Copy-paste: same actual value repeated
   const valCount = new Map<string, number>();
   for (const e of errors) {
@@ -1117,24 +1019,7 @@ function detectPatterns(
       return { from, to, count };
     });
 
-  // High-risk sheets
-  const highRiskSheets = sheets
-    .map((s) => ({
-      name: s.name,
-      errorCount: s.errors.length,
-      errorRate: s.comparedCells > 0 ? (s.errors.length / s.comparedCells) * 100 : 0,
-    }))
-    .filter((s) => s.errorRate > 5 || s.errorCount > 20)
-    .sort((a, b) => b.errorRate - a.errorRate)
-    .slice(0, 5);
-
-  return {
-    copyPaste,
-    clusters,
-    digitSwaps,
-    highRiskSheets,
-    mergesSplits: [], // Populated by compareWorkbooks
-  };
+  return { copyPaste, clusters, digitSwaps };
 }
 
 // ---------- Narrative + coaching ----------
