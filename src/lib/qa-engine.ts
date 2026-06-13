@@ -867,6 +867,121 @@ function classifyCell(
   };
 }
 
+// ---------- Continuation-sheet detection ----------
+// When the Reviewer splits one logical table across multiple sheets
+// (e.g. "جدول 17 Table  " and "جدول 17 Table   (2)") but the Employee
+// keeps everything in a single sheet, the engine would previously exclude
+// the (2) sheet entirely and flag all extra columns in the merged sheet.
+//
+// This function detects "base + continuation" pairs in the Reviewer workbook
+// and merges them into a single virtual grid so they can be compared against
+// the Employee's single sheet.
+//
+// Detection rule: a Reviewer sheet name that ends with " (N)" (N ≥ 2) is a
+// continuation of the sheet whose name is the prefix before " (N)".  We only
+// apply the merge when:
+//   1. The continuation sheet exists in the Reviewer but NOT in the Employee.
+//   2. The base sheet exists in both workbooks (it will be compared normally).
+//
+// The merge appends the continuation grid's columns to the right of the base
+// grid (row-by-row), skipping any header rows that duplicate the base headers.
+
+function stripTrailingEmptyCols(grid: string[][]): string[][] {
+  let maxCol = 0;
+  for (const row of grid) {
+    for (let c = row.length - 1; c >= 0; c--) {
+      if (!isEmpty(row[c])) { maxCol = Math.max(maxCol, c + 1); break; }
+    }
+  }
+  return grid.map((row) => row.slice(0, maxCol));
+}
+
+function mergeContinuationGrids(
+  base: string[][], cont: string[][], headerRows: number,
+): string[][] {
+  const rows = Math.max(base.length, cont.length);
+  const result: string[][] = [];
+  const baseClean = stripTrailingEmptyCols(base);
+  const contClean = stripTrailingEmptyCols(cont);
+  const baseCols = baseClean.reduce((m, r) => Math.max(m, r.length), 0);
+
+  for (let r = 0; r < rows; r++) {
+    const rowA = baseClean[r] ?? [];
+    const rowB = contClean[r] ?? [];
+
+    // For header rows in the continuation that exactly duplicate the base
+    // header, skip them so we don't double-count headers.
+    // For header rows that differ (extra sub-headers), append them.
+    if (r < headerRows) {
+      // Keep base header row as-is; append continuation header cells.
+      const merged = [...rowA];
+      while (merged.length < baseCols) merged.push("");
+      // Only append non-empty continuation header cells
+      for (let c = 0; c < rowB.length; c++) {
+        if (!isEmpty(rowB[c])) merged.push(rowB[c]);
+        else merged.push("");
+      }
+      result.push(merged);
+    } else {
+      // Data row: concatenate side by side
+      const merged = [...rowA];
+      while (merged.length < baseCols) merged.push("");
+      result.push([...merged, ...rowB]);
+    }
+  }
+  return result;
+}
+
+// Returns a map: baseName → merged reviewer grid (base + all continuations)
+// Only produced when the continuation is missing from the Employee workbook.
+function buildContinuationMerges(
+  wbA: XLSX.WorkBook, // Employee
+  wbB: XLSX.WorkBook, // Reviewer
+): Map<string, string[][]> {
+  const merges = new Map<string, string[][]>();
+  const CONT_RE = /^(.+?)\s*\((\d+)\)\s*$/;
+
+  // Group continuation sheets by base name
+  const contByBase = new Map<string, Array<{ n: number; name: string }>>();
+  for (const name of wbB.SheetNames) {
+    const m = name.match(CONT_RE);
+    if (!m) continue;
+    const n = Number(m[2]);
+    if (n < 2) continue;
+    const base = m[1].trimEnd();
+    if (!contByBase.has(base)) contByBase.set(base, []);
+    contByBase.get(base)!.push({ n, name });
+  }
+
+  for (const [base, conts] of contByBase) {
+    // Only handle if base exists in both workbooks
+    const wsBaseA = wbA.Sheets[base];
+    const wsBaseB = wbB.Sheets[base];
+    if (!wsBaseA || !wsBaseB) continue;
+
+    // Only handle continuations that are MISSING from Employee
+    const missing = conts.filter((c) => !wbA.Sheets[c.name]);
+    if (missing.length === 0) continue;
+
+    // Sort by continuation number
+    missing.sort((a, b) => a.n - b.n);
+
+    let merged = sheetToGrid(wsBaseB);
+    const headerRows = detectHeaderRows(merged);
+
+    for (const { name } of missing) {
+      const wsC = wbB.Sheets[name];
+      if (!wsC) continue;
+      const contGrid = sheetToGrid(wsC);
+      merged = mergeContinuationGrids(merged, contGrid, headerRows);
+    }
+
+    merges.set(base, merged);
+  }
+
+  return merges;
+}
+
 // ---------- Workbook orchestrator ----------
 
 export interface WorkbookReport {
@@ -914,8 +1029,29 @@ export function compareWorkbooks(
   const excluded: Array<{ name: string; reason: string }> = [];
   const strict = detectStrict(`${fileA.name} ${fileB.name}`, config.strictMode);
 
+  // Build reviewer continuation merges: when Reviewer splits a table across
+  // "Sheet X" + "Sheet X (2)", but Employee keeps all data in "Sheet X".
+  const continuationMerges = buildContinuationMerges(fileA.wb, fileB.wb);
+
+  // Track which sheets are absorbed into a continuation merge (skip them below)
+  const absorbedReviewerSheets = new Set<string>();
+  const CONT_RE = /^(.+?)\s*\((\d+)\)\s*$/;
+  for (const name of fileB.wb.SheetNames) {
+    const m = name.match(CONT_RE);
+    if (!m) continue;
+    const n = Number(m[2]);
+    if (n < 2) continue;
+    const base = m[1].trimEnd();
+    if (continuationMerges.has(base) && !fileA.wb.Sheets[name]) {
+      absorbedReviewerSheets.add(name);
+    }
+  }
+
   const names = Array.from(new Set([...fileA.wb.SheetNames, ...fileB.wb.SheetNames]));
   for (const name of names) {
+    // Skip reviewer continuation sheets that have been merged into their base
+    if (absorbedReviewerSheets.has(name)) continue;
+
     const wsA = fileA.wb.Sheets[name];
     const wsB = fileB.wb.Sheets[name];
     if (!wsA || !wsB) {
@@ -923,7 +1059,8 @@ export function compareWorkbooks(
       continue;
     }
     const gridA = sheetToGrid(wsA);
-    const gridB = sheetToGrid(wsB);
+    // Use merged reviewer grid if this sheet has continuations absorbed into it
+    const gridB = continuationMerges.get(name) ?? sheetToGrid(wsB);
     const reason = shouldExcludeSheet(name, Math.max(gridA.length, gridB.length));
     if (reason) {
       excluded.push({ name, reason });
