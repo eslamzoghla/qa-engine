@@ -1,8 +1,10 @@
 import { useQA } from "@/lib/qa-store";
 import { useMemo, useState } from "react";
 import { Input } from "@/components/ui/input";
-import { Search, Download } from "lucide-react";
+import { Search, Download, Table as TableIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { charDiff } from "@/lib/utils";
+import { exportToXLSX } from "@/lib/xlsx-export";
 
 const SEV_BADGE: Record<string, string> = {
   CRITICAL: "bg-critical text-white",
@@ -63,17 +65,20 @@ export function ErrorTable() {
             <option>CRITICAL</option><option>HIGH</option><option>HEADER</option>
             <option>MEDIUM</option><option>LOW</option>
           </select>
+          <Button size="sm" variant="outline" onClick={() => report && exportToXLSX(report)} className="h-8">
+            <TableIcon className="h-3.5 w-3.5 mr-1" /> Excel
+          </Button>
           <Button size="sm" variant="outline" onClick={downloadCSV} className="h-8">
             <Download className="h-3.5 w-3.5 mr-1" /> CSV
           </Button>
         </div>
       </div>
-      <div className="overflow-auto max-h-96">
+      <div className="overflow-auto max-h-[600px]">
         <table className="w-full text-xs">
           <thead className="bg-surface-2 sticky top-0">
             <tr className="text-left">
               <Th>Sheet</Th><Th>Cell</Th><Th>Severity</Th><Th>Class</Th>
-              <Th>Expected</Th><Th>Actual</Th><Th className="text-right">Pen</Th>
+              <Th>Expected</Th><Th>Actual</Th><Th>Sim %</Th><Th className="text-right">Pen</Th>
             </tr>
           </thead>
           <tbody>
@@ -87,8 +92,13 @@ export function ErrorTable() {
                   </span>
                 </Td>
                 <Td>{e.errorClass}</Td>
-                <Td className="font-mono max-w-[200px] truncate" title={e.expected}>{e.expected || "∅"}</Td>
-                <Td className="font-mono max-w-[200px] truncate text-critical" title={e.actual}>{e.actual || "∅"}</Td>
+                <Td className="font-mono max-w-[200px]" title={`Normalized: ${e.normalizedExpected}`}>
+                  <DiffView oldStr={e.expected} newStr={e.actual} type="expected" />
+                </Td>
+                <Td className="font-mono max-w-[200px] text-critical" title={`Normalized: ${e.normalizedActual}`}>
+                  <DiffView oldStr={e.expected} newStr={e.actual} type="actual" />
+                </Td>
+                <Td className="tabular-nums">{(e.similarityPercentage || 0).toFixed(1)}%</Td>
                 <Td className="text-right tabular-nums font-semibold">{e.penalty}</Td>
               </tr>
             ))}
@@ -112,4 +122,30 @@ function Th({ children, className = "" }: { children: any; className?: string })
 }
 function Td({ children, className = "", title }: { children: any; className?: string; title?: string }) {
   return <td className={`px-3 py-2 ${className}`} title={title}>{children}</td>;
+}
+
+function DiffView({ oldStr, newStr, type }: { oldStr: string; newStr: string; type: "expected" | "actual" }) {
+  const diff = useMemo(() => charDiff(oldStr, newStr), [oldStr, newStr]);
+
+  return (
+    <span className="break-all">
+      {diff.map((part, i) => {
+        if (type === "expected") {
+          if (part.type === "added") return null;
+          return (
+            <span key={i} className={part.type === "removed" ? "bg-high/20 text-foreground" : ""}>
+              {part.value}
+            </span>
+          );
+        } else {
+          if (part.type === "removed") return null;
+          return (
+            <span key={i} className={part.type === "added" ? "bg-critical/20 font-bold" : ""}>
+              {part.value}
+            </span>
+          );
+        }
+      })}
+    </span>
+  );
 }

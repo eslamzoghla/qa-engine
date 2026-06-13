@@ -100,9 +100,15 @@ function StructuralPanel({ report }: { report: NonNullable<ReturnType<typeof use
   const extraRows = c["Extra Row"] ?? 0;
   const rowShifts = c["Row Shift"] ?? 0;
   const colShifts = c["Column Shift"] ?? 0;
-  const total = missingCols + extraCols + missingRows + extraRows + rowShifts + colShifts;
+  const totalStr = missingCols + extraCols + missingRows + extraRows + rowShifts + colShifts;
+
+  const numericErrors = (c["Numeric Difference"] ?? 0) + (c["Missing Digit"] ?? 0) + (c["Extra Digit"] ?? 0) + (c["Digit Transposition"] ?? 0) + (c["Digit Substitution"] ?? 0);
+  const textErrors = (c["Text Typo"] ?? 0) + (c["Major Text Difference"] ?? 0);
+  const rangeErrors = (c["Range Inversion"] ?? 0) + (c["Range Boundary"] ?? 0) + (c["Range Representation"] ?? 0);
+  const headerErrors = (c["Header Mismatch"] ?? 0);
 
   return (
+    <div className="space-y-4">
     <div className="rounded-2xl bg-surface border border-border p-4 shadow-sm">
       <div className="flex items-center justify-between mb-3">
         <div>
@@ -123,6 +129,24 @@ function StructuralPanel({ report }: { report: NonNullable<ReturnType<typeof use
         <SCell label="Row Shifts" value={rowShifts} />
         <SCell label="Column Shifts" value={colShifts} />
       </div>
+    </div>
+
+    <div className="rounded-2xl bg-surface border border-border p-4 shadow-sm">
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <div className="text-[11px] uppercase tracking-wider text-muted-foreground font-medium">Content Defects</div>
+          <div className="text-xs text-muted-foreground mt-0.5">
+            Cell-level transcription and formatting errors.
+          </div>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+        <SCell label="Numeric Errors" value={numericErrors} />
+        <SCell label="Text Errors" value={textErrors} />
+        <SCell label="Range Errors" value={rangeErrors} />
+        <SCell label="Header Errors" value={headerErrors} />
+      </div>
+    </div>
     </div>
   );
 }
