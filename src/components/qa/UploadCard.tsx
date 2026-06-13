@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { Upload, FileSpreadsheet, Sparkles, Loader2 } from "lucide-react";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
 import { useQA } from "@/lib/qa-store";
 import { loadWorkbook, compareWorkbooks } from "@/lib/qa-engine";
 import { toast } from "sonner";
@@ -68,6 +69,7 @@ export function UploadCard() {
   const [fileA, setFileA] = useState<File | null>(null);
   const [fileB, setFileB] = useState<File | null>(null);
   const [running, setRunning] = useState(false);
+  const [progress, setProgress] = useState(0);
 
   async function run() {
     if (!fileA || !fileB) {
@@ -75,16 +77,17 @@ export function UploadCard() {
       return;
     }
     setRunning(true);
+    setProgress(0);
     try {
       const [bufA, bufB] = await Promise.all([fileA.arrayBuffer(), fileB.arrayBuffer()]);
       const wbA = loadWorkbook(bufA);
       const wbB = loadWorkbook(bufB);
-      // Yield to keep UI responsive
-      await new Promise((r) => setTimeout(r, 20));
-      const report = compareWorkbooks(
+
+      const report = await compareWorkbooks(
         { name: fileA.name, wb: wbA },
         { name: fileB.name, wb: wbB },
         config,
+        (p) => setProgress(p * 100)
       );
       setReport(report);
       setActiveSheet(report.sheets[0]?.name ?? null);
@@ -121,6 +124,15 @@ export function UploadCard() {
         <Slot accent="emerald" label="File B — Reviewer Reference" sublabel="Auditor / ground-truth workbook"
               file={fileB} onPick={setFileB} />
       </div>
+      {running && (
+        <div className="mt-5 space-y-2">
+          <div className="flex items-center justify-between text-[10px] uppercase tracking-wider font-bold text-muted-foreground">
+            <span>Processing Sheets…</span>
+            <span>{Math.round(progress)}%</span>
+          </div>
+          <Progress value={progress} className="h-1.5" />
+        </div>
+      )}
       <Button onClick={run} disabled={running || !fileA || !fileB} className="w-full mt-5">
         {running ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Evaluating…</>
                  : <><Sparkles className="h-4 w-4 mr-2" /> Run Quality Assurance</>}
