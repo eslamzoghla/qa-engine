@@ -1501,3 +1501,22 @@ export function buildCoaching(r: WorkbookReport): Array<{ title: string; body: s
   }
   return recs.slice(0, 5);
 }
+
+// ---------- Dev-only self-tests ----------
+// Validates that percentage tolerance interprets both fractional (0.05) and
+// percent-point (5) settings consistently. Runs once at module load in dev.
+if (typeof import.meta !== "undefined" && (import.meta as { env?: { DEV?: boolean } }).env?.DEV) {
+  const cfgP: QAConfig = { ...DEFAULT_CONFIG, numericToleranceMode: "PERCENTAGE", numericTolerance: 5 };
+  const cfgF: QAConfig = { ...DEFAULT_CONFIG, numericToleranceMode: "PERCENTAGE", numericTolerance: 0.05 };
+  // 5% of 100 → 95 should be within tolerance; 94 should not.
+  const within = (cfg: QAConfig, a: string, b: string) => {
+    const an = tryParseNumber(a)!, bn = tryParseNumber(b)!;
+    const diff = Math.abs(an - bn);
+    const tol = Math.abs(bn) * (cfg.numericTolerance > 1 ? cfg.numericTolerance / 100 : cfg.numericTolerance);
+    return diff <= tol;
+  };
+  console.assert(within(cfgP, "95", "100") === true, "[QA self-test] 5%% tol: 95 vs 100 should pass");
+  console.assert(within(cfgP, "94", "100") === false, "[QA self-test] 5%% tol: 94 vs 100 should fail");
+  console.assert(within(cfgF, "95", "100") === true, "[QA self-test] 0.05 tol: 95 vs 100 should pass");
+  console.assert(within(cfgF, "94", "100") === false, "[QA self-test] 0.05 tol: 94 vs 100 should fail");
+}
