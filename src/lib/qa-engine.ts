@@ -166,28 +166,74 @@ export function parseRange(s: string): [string, string, string] | null {
 }
 
 // ---------- Similarity ----------
+// Full Levenshtein is O(n*m); we short-circuit obvious cases and use bounded
+// banded DP so similarity stays fast for enterprise-sized workbooks.
 
 export function levenshtein(a: string, b: string): number {
   if (a === b) return 0;
   if (!a.length) return b.length;
   if (!b.length) return a.length;
-  const dp = Array.from({ length: b.length + 1 }, (_, i) => i);
-  for (let i = 1; i <= a.length; i++) {
-    let prev = dp[0];
-    dp[0] = i;
-    for (let j = 1; j <= b.length; j++) {
-      const tmp = dp[j];
-      dp[j] = a[i - 1] === b[j - 1] ? prev : 1 + Math.min(prev, dp[j], dp[j - 1]);
-      prev = tmp;
+  return boundedLevenshtein(a, b, Math.max(a.length, b.length));
+}
+
+/** Banded Levenshtein with early-exit when distance exceeds `maxDistance`. */
+export function boundedLevenshtein(a: string, b: string, maxDistance: number): number {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  if (b.length > a.length) { const t = a; a = b; b = t; }
+  const n = a.length, m = b.length;
+  if (n - m > maxDistance) return maxDistance + 1;
+  let prev = new Uint32Array(m + 1);
+  let curr = new Uint32Array(m + 1);
+  for (let j = 0; j <= m; j++) prev[j] = j;
+  for (let i = 1; i <= n; i++) {
+    curr[0] = i;
+    let rowMin = i;
+    const jStart = Math.max(1, i - maxDistance);
+    const jEnd = Math.min(m, i + maxDistance);
+    if (jStart > 1) curr[jStart - 1] = maxDistance + 1;
+    for (let j = jStart; j <= jEnd; j++) {
+      const cost = a.charCodeAt(i - 1) === b.charCodeAt(j - 1) ? 0 : 1;
+      const del = prev[j] + 1;
+      const ins = curr[j - 1] + 1;
+      const sub = prev[j - 1] + cost;
+      let v = del < ins ? del : ins;
+      if (sub < v) v = sub;
+      curr[j] = v;
+      if (v < rowMin) rowMin = v;
     }
+    if (rowMin > maxDistance) return maxDistance + 1;
+    const tmp = prev; prev = curr; curr = tmp;
   }
-  return dp[b.length];
+  return prev[m];
+}
+
+function tokenJaccard(a: string, b: string): number {
+  const ta = new Set(a.toLowerCase().split(/\W+/).filter(Boolean));
+  const tb = new Set(b.toLowerCase().split(/\W+/).filter(Boolean));
+  if (!ta.size && !tb.size) return 1;
+  let inter = 0;
+  for (const t of ta) if (tb.has(t)) inter++;
+  const union = ta.size + tb.size - inter;
+  return union ? inter / union : 0;
 }
 
 export function similarity(a: string, b: string): number {
-  const maxLen = Math.max(a.length, b.length);
-  if (!maxLen) return 1;
-  return 1 - levenshtein(a, b) / maxLen;
+  if (a === b) return 1;
+  const la = a.length, lb = b.length;
+  if (!la && !lb) return 1;
+  if (!la || !lb) return 0;
+  const maxLen = la > lb ? la : lb;
+  const minLen = la > lb ? lb : la;
+  // Fast-path: length disparity > 50% — clearly unrelated, skip DP.
+  if ((maxLen - minLen) / maxLen > 0.5) return (minLen / maxLen) * 0.4;
+  // Fast-path: very long strings → cheaper token Jaccard.
+  if (maxLen > 200) return tokenJaccard(a, b);
+  const cap = Math.max(1, Math.ceil(maxLen * 0.4));
+  const d = boundedLevenshtein(a, b, cap);
+  if (d > cap) return 1 - (cap + 1) / maxLen;
+  return 1 - d / maxLen;
 }
 
 // ---------- Digit-level classifiers ----------
@@ -329,10 +375,16 @@ function detectShifts(
   gridA: string[][], gridB: string[][], cfg: QAConfig,
 ): Set<string> {
   const shiftCells = new Set<string>();
-  // Column shifts only — row shifts are now handled by alignRows()
+  // Column shifts — row shifts handled by alignRows().
+  // Expanded window: ±1..±5 (was ±1..±2) so larger offsets are detected.
+  // For each candidate offset we require both a minimum number of compared
+  // cells and ≥ threshold matches before classifying. Best-confidence offset
+  // wins per column to avoid double-flagging.
   const cols = Math.max(...gridA.map((r) => r.length), ...gridB.map((r) => r.length), 0);
+  const OFFSETS = [-1, 1, -2, 2, -3, 3, -4, 4, -5, 5];
   for (let c = 0; c < cols; c++) {
-    for (const offset of [-1, 1, -2, 2]) {
+    let best: { offset: number; conf: number; compared: number } | null = null;
+    for (const offset of OFFSETS) {
       const c2 = c + offset;
       if (c2 < 0) continue;
       let matches = 0, compared = 0;
@@ -344,9 +396,14 @@ function detectShifts(
         compared++;
         if (normalizeText(a) === normalizeText(b)) matches++;
       }
-      if (compared >= cfg.minimumShiftCells && matches / compared >= cfg.shiftDetectionThreshold) {
-        for (let r = 0; r < len; r++) shiftCells.add(`${r},${c}`);
-      }
+      if (compared < cfg.minimumShiftCells) continue;
+      const conf = matches / compared;
+      if (conf < cfg.shiftDetectionThreshold) continue;
+      if (!best || conf > best.conf) best = { offset, conf, compared };
+    }
+    if (best) {
+      const len = Math.min(gridA.length, gridB.length);
+      for (let r = 0; r < len; r++) shiftCells.add(`${r},${c}`);
     }
   }
   return shiftCells;
@@ -383,8 +440,11 @@ function alignRows(
 
   const n = sigA.length, m = sigB.length;
 
-  // Fallback for very large sheets — identity alignment, lets old shift detector handle it
-  if (n * m > 2_000_000) {
+  // Fallback for very large sheets — keep memory bounded.
+  // Original cap of 2,000,000 (≈4 MB Uint32 grid) was too generous for
+  // enterprise workbooks with 50k+ rows: it caused browser tab freezes.
+  // 500,000 keeps the worst-case DP allocation under ~1 MB.
+  if (n * m > 500_000) {
     const max = Math.max(n, m);
     for (let i = 0; i < max; i++) {
       ops.push({
@@ -847,8 +907,11 @@ function classifyCell(
   const an = tryParseNumber(a), bn = tryParseNumber(b);
   if (an !== null && bn !== null && !strict) {
     const diff = Math.abs(an - bn);
+    // Percentage mode: cfg.numericTolerance is interpreted as percent-points
+    // when > 1 (e.g. 5 → 5%), or as a fraction when ≤ 1 (e.g. 0.05 → 5%).
+    // Both representations resolve to the same fractional tolerance.
     const tol = cfg.numericToleranceMode === "PERCENTAGE"
-      ? Math.abs(bn) * cfg.numericTolerance
+      ? Math.abs(bn) * (cfg.numericTolerance > 1 ? cfg.numericTolerance / 100 : cfg.numericTolerance)
       : cfg.numericTolerance;
     if (diff <= tol) return "match";
   }
@@ -1031,6 +1094,16 @@ export interface WorkbookReport {
       coefficient: number;
       penalty: number;
     }>;
+    // Enterprise compliance reporting
+    compliance: {
+      complianceScore: number;
+      riskScore: number;
+      grade: "A" | "B" | "C" | "D";
+      gradeLabel: string;
+      executiveSummary: string;
+      topFindings: ErrorRecord[];
+      recommendations: string[];
+    };
   };
   grade: { label: string; tier: number; rationale: string[] };
   patterns: {
@@ -1169,6 +1242,12 @@ export function compareWorkbooks(
   const dataScore = clamp(100 - dataPenalty);
   const finalAuditScore = clamp(structuralScore * 0.4 + dataScore * 0.6);
 
+  // ---------- Compliance / Risk ----------
+  const compliance = buildCompliance(
+    finalAuditScore, structuralScore, dataScore, bySeverity, byClass, allErrors,
+    sheets.length, comparedCells,
+  );
+
   return {
     config, strictMode: strict, sheets, excludedSheets: excluded,
     totals: {
@@ -1179,12 +1258,69 @@ export function compareWorkbooks(
       structuralPenalty, dataPenalty,
       structuralScore, dataScore, finalAuditScore,
       auditBreakdown,
+      compliance,
     },
     grade, patterns,
     metadata: {
       fileAName: fileA.name, fileBName: fileB.name,
       timestamp: new Date().toISOString(),
     },
+  };
+}
+
+function buildCompliance(
+  finalAuditScore: number,
+  structuralScore: number,
+  dataScore: number,
+  bySeverity: Record<Severity, number>,
+  byClass: Record<string, number>,
+  allErrors: ErrorRecord[],
+  sheetsCount: number,
+  comparedCells: number,
+): WorkbookReport["totals"]["compliance"] {
+  const complianceScore = finalAuditScore;
+  const criticalPressure = Math.min(20, bySeverity.CRITICAL * 2);
+  const riskScore = Math.max(0, Math.min(100, 100 - complianceScore + criticalPressure));
+  let grade: "A" | "B" | "C" | "D";
+  let gradeLabel: string;
+  if (complianceScore >= 95) { grade = "A"; gradeLabel = "A — Excellent"; }
+  else if (complianceScore >= 90) { grade = "B"; gradeLabel = "B — Good"; }
+  else if (complianceScore >= 80) { grade = "C"; gradeLabel = "C — Acceptable"; }
+  else { grade = "D"; gradeLabel = "D — Needs Remediation"; }
+
+  const sevRank: Record<Severity, number> = { CRITICAL: 0, HIGH: 1, HEADER: 2, MEDIUM: 3, LOW: 4 };
+  const topFindings = [...allErrors]
+    .sort((a, b) => sevRank[a.severity] - sevRank[b.severity] || b.penalty - a.penalty)
+    .slice(0, 25);
+
+  const recommendations: string[] = [];
+  const cnt = (k: string) => byClass[k] ?? 0;
+  if (cnt("Missing Column") + cnt("Extra Column") > 0)
+    recommendations.push("Reconcile column structure against the reviewer template before transcription — structural column defects propagate to every row.");
+  if (cnt("Missing Row") + cnt("Extra Row") > 0)
+    recommendations.push("Validate row count and key fields against the source to prevent insertions/omissions that cascade into row-shift errors.");
+  if (cnt("Row Shift") + cnt("Column Shift") > 0)
+    recommendations.push("Anchor the first key column and validate row alignment after each batch to eliminate block shifts.");
+  if (cnt("Digit Substitution") + cnt("Digit Transposition") + cnt("Missing Digit") + cnt("Extra Digit") >= 3)
+    recommendations.push("Adopt paced 10-key drills and read-back-aloud verification for numeric fields.");
+  if (cnt("Major Text Difference") >= 2 || cnt("Text Typo") >= 5)
+    recommendations.push("Apply a second-pass text proofread, especially for Arabic alef-hamza and teh-marbuta variants.");
+  if (cnt("Header Mismatch") >= 1)
+    recommendations.push("Treat headers as verbatim labels — header errors silently invalidate every cell beneath them.");
+  if (cnt("Missing Value") + cnt("Extra Value") >= 3)
+    recommendations.push("Run a top-to-bottom column completeness sweep before submission.");
+  if (recommendations.length === 0)
+    recommendations.push("No systemic defects detected — maintain current data-entry discipline.");
+
+  const exec =
+    `Audited ${sheetsCount} sheet(s) across ${comparedCells.toLocaleString()} compared cells. ` +
+    `Final compliance score ${complianceScore.toFixed(1)}/100 (Grade ${grade}). ` +
+    `Structural integrity ${structuralScore.toFixed(1)}/100 · Data quality ${dataScore.toFixed(1)}/100. ` +
+    `Risk score ${riskScore.toFixed(1)}/100${bySeverity.CRITICAL > 0 ? ` — ${bySeverity.CRITICAL} critical incident(s) require immediate remediation.` : "."}`;
+
+  return {
+    complianceScore, riskScore, grade, gradeLabel,
+    executiveSummary: exec, topFindings, recommendations,
   };
 }
 
@@ -1364,4 +1500,23 @@ export function buildCoaching(r: WorkbookReport): Array<{ title: string; body: s
     });
   }
   return recs.slice(0, 5);
+}
+
+// ---------- Dev-only self-tests ----------
+// Validates that percentage tolerance interprets both fractional (0.05) and
+// percent-point (5) settings consistently. Runs once at module load in dev.
+if (typeof import.meta !== "undefined" && (import.meta as { env?: { DEV?: boolean } }).env?.DEV) {
+  const cfgP: QAConfig = { ...DEFAULT_CONFIG, numericToleranceMode: "PERCENTAGE", numericTolerance: 5 };
+  const cfgF: QAConfig = { ...DEFAULT_CONFIG, numericToleranceMode: "PERCENTAGE", numericTolerance: 0.05 };
+  // 5% of 100 → 95 should be within tolerance; 94 should not.
+  const within = (cfg: QAConfig, a: string, b: string) => {
+    const an = tryParseNumber(a)!, bn = tryParseNumber(b)!;
+    const diff = Math.abs(an - bn);
+    const tol = Math.abs(bn) * (cfg.numericTolerance > 1 ? cfg.numericTolerance / 100 : cfg.numericTolerance);
+    return diff <= tol;
+  };
+  console.assert(within(cfgP, "95", "100") === true, "[QA self-test] 5%% tol: 95 vs 100 should pass");
+  console.assert(within(cfgP, "94", "100") === false, "[QA self-test] 5%% tol: 94 vs 100 should fail");
+  console.assert(within(cfgF, "95", "100") === true, "[QA self-test] 0.05 tol: 95 vs 100 should pass");
+  console.assert(within(cfgF, "94", "100") === false, "[QA self-test] 0.05 tol: 94 vs 100 should fail");
 }

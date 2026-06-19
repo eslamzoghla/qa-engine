@@ -87,9 +87,49 @@ export function Scorecard() {
               sub="reviewer remediation" />
       </div>
 
+      <CompliancePanel report={report} />
       <AuditScorePanel report={report} />
       <AuditBreakdownPanel report={report} />
       <StructuralPanel report={report} />
+    </div>
+  );
+}
+
+function CompliancePanel({ report }: { report: NonNullable<ReturnType<typeof useQA>["report"]> }) {
+  const c = report.totals.compliance;
+  const toneScore = (n: number) => n >= 90 ? "text-success" : n >= 70 ? "text-medium" : "text-critical";
+  const toneRisk = (n: number) => n >= 30 ? "text-critical" : n >= 10 ? "text-medium" : "text-success";
+  return (
+    <div className="rounded-2xl border border-primary/30 bg-gradient-to-br from-primary/5 via-surface to-surface p-5 shadow-sm">
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <div className="text-[11px] uppercase tracking-wider text-muted-foreground font-medium">Compliance Report</div>
+          <div className="text-sm text-muted-foreground mt-1 max-w-2xl">{c.executiveSummary}</div>
+        </div>
+        <div className="flex items-end gap-6">
+          <div>
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Compliance</div>
+            <div className={`text-3xl font-bold tabular-nums ${toneScore(c.complianceScore)}`}>{c.complianceScore.toFixed(1)}</div>
+          </div>
+          <div>
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Risk</div>
+            <div className={`text-3xl font-bold tabular-nums ${toneRisk(c.riskScore)}`}>{c.riskScore.toFixed(1)}</div>
+          </div>
+          <div>
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Grade</div>
+            <div className={`text-3xl font-bold ${toneScore(c.complianceScore)}`}>{c.grade}</div>
+            <div className="text-[10px] text-muted-foreground">{c.gradeLabel}</div>
+          </div>
+        </div>
+      </div>
+      {c.recommendations.length > 0 && (
+        <div className="mt-4">
+          <div className="text-[11px] uppercase tracking-wider text-muted-foreground font-medium mb-1">Recommendations</div>
+          <ul className="space-y-1 text-xs text-muted-foreground list-disc pl-5">
+            {c.recommendations.map((r, i) => <li key={i}>{r}</li>)}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }

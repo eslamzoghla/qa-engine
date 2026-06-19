@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { ShieldCheck, FileSpreadsheet, RotateCcw, Download, Loader2 } from "lucide-react";
+import { ShieldCheck, FileSpreadsheet, RotateCcw, Download, Loader2, FileJson, FileText, Sheet } from "lucide-react";
 import { QAProvider, useQA } from "@/lib/qa-store";
 import { UploadCard } from "@/components/qa/UploadCard";
 import { ConfigPanel } from "@/components/qa/ConfigPanel";
@@ -12,7 +12,7 @@ import { Narrative, Coaching, Patterns } from "@/components/qa/Narrative";
 import { ErrorTable } from "@/components/qa/ErrorTable";
 import { Button } from "@/components/ui/button";
 import { Toaster } from "@/components/ui/sonner";
-import { exportElementToPDF } from "@/lib/pdf-export";
+import { exportReportToPDF, exportReportToCSV, exportReportToJSON, exportReportToXLSX } from "@/lib/pdf-export";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/")({
@@ -35,21 +35,40 @@ export const Route = createFileRoute("/")({
 function Page() {
   const { report, setReport, employeeName } = useQA();
   const dashboardRef = useRef<HTMLDivElement>(null);
-  const [exporting, setExporting] = useState(false);
+  const [exporting, setExporting] = useState<null | "pdf" | "csv" | "json" | "xlsx">(null);
 
-  async function handleExport() {
-    if (!dashboardRef.current) return;
-    setExporting(true);
+  const safeStem = () => {
+    const safeName = (employeeName || "employee").replace(/[^a-z0-9\-_]+/gi, "_");
+    const stamp = new Date().toISOString().slice(0, 10);
+    return `qa-report_${safeName}_${stamp}`;
+  };
+
+  async function handleExport(kind: "pdf" | "csv" | "json" | "xlsx") {
+    if (!report) return;
+    setExporting(kind);
+    const stem = safeStem();
     try {
-      const safeName = (employeeName || "employee").replace(/[^a-z0-9\-_]+/gi, "_");
-      const stamp = new Date().toISOString().slice(0, 10);
-      await exportElementToPDF(dashboardRef.current, `qa-report_${safeName}_${stamp}.pdf`);
-      toast.success("Dashboard exported as PDF");
+      if (kind === "pdf") {
+        await exportReportToPDF(report, `${stem}.pdf`, {
+          employeeName,
+          onProgress: (step) => toast.message(step),
+        });
+        toast.success("Structured PDF report generated");
+      } else if (kind === "csv") {
+        exportReportToCSV(report, `${stem}.csv`);
+        toast.success("Errors exported as CSV");
+      } else if (kind === "json") {
+        exportReportToJSON(report, `${stem}.json`);
+        toast.success("Report exported as JSON");
+      } else {
+        exportReportToXLSX(report, `${stem}.xlsx`);
+        toast.success("Report exported as Excel");
+      }
     } catch (e) {
       console.error(e);
-      toast.error("Failed to export PDF");
+      toast.error(`Export failed: ${(e as Error).message || "unknown error"}`);
     } finally {
-      setExporting(false);
+      setExporting(null);
     }
   }
 
@@ -83,10 +102,20 @@ function Page() {
                 <span className="mx-2">·</span>
                 <span className="font-semibold text-foreground">B:</span> {report.metadata.fileBName}
               </div>
-              <div className="flex items-center gap-2">
-                <Button size="sm" onClick={handleExport} disabled={exporting}>
-                  {exporting ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Download className="h-3.5 w-3.5 mr-1" />}
-                  {exporting ? "Exporting…" : "Download PDF"}
+              <div className="flex items-center gap-2 flex-wrap">
+                <Button size="sm" onClick={() => handleExport("pdf")} disabled={exporting !== null}>
+                  {exporting === "pdf" ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Download className="h-3.5 w-3.5 mr-1" />}
+                  {exporting === "pdf" ? "Generating…" : "PDF"}
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => handleExport("xlsx")} disabled={exporting !== null}>
+                  {exporting === "xlsx" ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Sheet className="h-3.5 w-3.5 mr-1" />}
+                  Excel
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => handleExport("csv")} disabled={exporting !== null}>
+                  <FileText className="h-3.5 w-3.5 mr-1" /> CSV
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => handleExport("json")} disabled={exporting !== null}>
+                  <FileJson className="h-3.5 w-3.5 mr-1" /> JSON
                 </Button>
                 <Button variant="ghost" size="sm" onClick={() => setReport(null)}>
                   <RotateCcw className="h-3.5 w-3.5 mr-1" /> New evaluation
