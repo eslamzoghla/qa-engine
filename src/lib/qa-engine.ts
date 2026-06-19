@@ -1018,6 +1018,19 @@ export interface WorkbookReport {
     workloadHours: number;
     bySeverity: Record<Severity, number>;
     byClass: Record<string, number>;
+    // Audit-grade weighted scoring
+    structuralPenalty: number;
+    dataPenalty: number;
+    structuralScore: number;
+    dataScore: number;
+    finalAuditScore: number;
+    auditBreakdown: Array<{
+      label: string;
+      kind: "structural" | "data";
+      count: number;
+      coefficient: number;
+      penalty: number;
+    }>;
   };
   grade: { label: string; tier: number; rationale: string[] };
   patterns: {
