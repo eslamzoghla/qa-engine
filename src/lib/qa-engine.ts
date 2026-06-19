@@ -1268,6 +1268,62 @@ export function compareWorkbooks(
   };
 }
 
+function buildCompliance(
+  finalAuditScore: number,
+  structuralScore: number,
+  dataScore: number,
+  bySeverity: Record<Severity, number>,
+  byClass: Record<string, number>,
+  allErrors: ErrorRecord[],
+  sheetsCount: number,
+  comparedCells: number,
+): WorkbookReport["totals"]["compliance"] {
+  const complianceScore = finalAuditScore;
+  const criticalPressure = Math.min(20, bySeverity.CRITICAL * 2);
+  const riskScore = Math.max(0, Math.min(100, 100 - complianceScore + criticalPressure));
+  let grade: "A" | "B" | "C" | "D";
+  let gradeLabel: string;
+  if (complianceScore >= 95) { grade = "A"; gradeLabel = "A — Excellent"; }
+  else if (complianceScore >= 90) { grade = "B"; gradeLabel = "B — Good"; }
+  else if (complianceScore >= 80) { grade = "C"; gradeLabel = "C — Acceptable"; }
+  else { grade = "D"; gradeLabel = "D — Needs Remediation"; }
+
+  const sevRank: Record<Severity, number> = { CRITICAL: 0, HIGH: 1, HEADER: 2, MEDIUM: 3, LOW: 4 };
+  const topFindings = [...allErrors]
+    .sort((a, b) => sevRank[a.severity] - sevRank[b.severity] || b.penalty - a.penalty)
+    .slice(0, 25);
+
+  const recommendations: string[] = [];
+  const cnt = (k: string) => byClass[k] ?? 0;
+  if (cnt("Missing Column") + cnt("Extra Column") > 0)
+    recommendations.push("Reconcile column structure against the reviewer template before transcription — structural column defects propagate to every row.");
+  if (cnt("Missing Row") + cnt("Extra Row") > 0)
+    recommendations.push("Validate row count and key fields against the source to prevent insertions/omissions that cascade into row-shift errors.");
+  if (cnt("Row Shift") + cnt("Column Shift") > 0)
+    recommendations.push("Anchor the first key column and validate row alignment after each batch to eliminate block shifts.");
+  if (cnt("Digit Substitution") + cnt("Digit Transposition") + cnt("Missing Digit") + cnt("Extra Digit") >= 3)
+    recommendations.push("Adopt paced 10-key drills and read-back-aloud verification for numeric fields.");
+  if (cnt("Major Text Difference") >= 2 || cnt("Text Typo") >= 5)
+    recommendations.push("Apply a second-pass text proofread, especially for Arabic alef-hamza and teh-marbuta variants.");
+  if (cnt("Header Mismatch") >= 1)
+    recommendations.push("Treat headers as verbatim labels — header errors silently invalidate every cell beneath them.");
+  if (cnt("Missing Value") + cnt("Extra Value") >= 3)
+    recommendations.push("Run a top-to-bottom column completeness sweep before submission.");
+  if (recommendations.length === 0)
+    recommendations.push("No systemic defects detected — maintain current data-entry discipline.");
+
+  const exec =
+    `Audited ${sheetsCount} sheet(s) across ${comparedCells.toLocaleString()} compared cells. ` +
+    `Final compliance score ${complianceScore.toFixed(1)}/100 (Grade ${grade}). ` +
+    `Structural integrity ${structuralScore.toFixed(1)}/100 · Data quality ${dataScore.toFixed(1)}/100. ` +
+    `Risk score ${riskScore.toFixed(1)}/100${bySeverity.CRITICAL > 0 ? ` — ${bySeverity.CRITICAL} critical incident(s) require immediate remediation.` : "."}`;
+
+  return {
+    complianceScore, riskScore, grade, gradeLabel,
+    executiveSummary: exec, topFindings, recommendations,
+  };
+}
+
 function computeGrade(weighted: number, sev: Record<Severity, number>): WorkbookReport["grade"] {
   const tiers: Array<{ label: string; tier: number; min: number }> = [
     { label: "Outstanding", tier: 7, min: 99.9 },
