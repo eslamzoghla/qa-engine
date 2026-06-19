@@ -1242,6 +1242,12 @@ export function compareWorkbooks(
   const dataScore = clamp(100 - dataPenalty);
   const finalAuditScore = clamp(structuralScore * 0.4 + dataScore * 0.6);
 
+  // ---------- Compliance / Risk ----------
+  const compliance = buildCompliance(
+    finalAuditScore, structuralScore, dataScore, bySeverity, byClass, allErrors,
+    sheets.length, comparedCells,
+  );
+
   return {
     config, strictMode: strict, sheets, excludedSheets: excluded,
     totals: {
@@ -1252,6 +1258,7 @@ export function compareWorkbooks(
       structuralPenalty, dataPenalty,
       structuralScore, dataScore, finalAuditScore,
       auditBreakdown,
+      compliance,
     },
     grade, patterns,
     metadata: {
