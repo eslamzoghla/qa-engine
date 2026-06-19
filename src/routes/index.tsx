@@ -102,10 +102,20 @@ function Page() {
                 <span className="mx-2">·</span>
                 <span className="font-semibold text-foreground">B:</span> {report.metadata.fileBName}
               </div>
-              <div className="flex items-center gap-2">
-                <Button size="sm" onClick={handleExport} disabled={exporting}>
-                  {exporting ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Download className="h-3.5 w-3.5 mr-1" />}
-                  {exporting ? "Exporting…" : "Download PDF"}
+              <div className="flex items-center gap-2 flex-wrap">
+                <Button size="sm" onClick={() => handleExport("pdf")} disabled={exporting !== null}>
+                  {exporting === "pdf" ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Download className="h-3.5 w-3.5 mr-1" />}
+                  {exporting === "pdf" ? "Generating…" : "PDF"}
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => handleExport("xlsx")} disabled={exporting !== null}>
+                  {exporting === "xlsx" ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Sheet className="h-3.5 w-3.5 mr-1" />}
+                  Excel
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => handleExport("csv")} disabled={exporting !== null}>
+                  <FileText className="h-3.5 w-3.5 mr-1" /> CSV
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => handleExport("json")} disabled={exporting !== null}>
+                  <FileJson className="h-3.5 w-3.5 mr-1" /> JSON
                 </Button>
                 <Button variant="ghost" size="sm" onClick={() => setReport(null)}>
                   <RotateCcw className="h-3.5 w-3.5 mr-1" /> New evaluation
