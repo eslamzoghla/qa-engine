@@ -59,6 +59,50 @@ export function ConfigPanel() {
           </Select>
         </Field>
       </div>
+
+      <div className="mt-5 pt-4 border-t border-border">
+        <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+          Audit Penalty Coefficients
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Extra Table">
+            <Input type="number" step="1" value={config.extraTableCoefficient}
+              onChange={(e) => set("extraTableCoefficient", Number(e.target.value))} />
+          </Field>
+          <Field label="Missing Table">
+            <Input type="number" step="1" value={config.missingTableCoefficient}
+              onChange={(e) => set("missingTableCoefficient", Number(e.target.value))} />
+          </Field>
+          <Field label="Extra Column">
+            <Input type="number" step="1" value={config.extraColumnCoefficient}
+              onChange={(e) => set("extraColumnCoefficient", Number(e.target.value))} />
+          </Field>
+          <Field label="Missing Column">
+            <Input type="number" step="1" value={config.missingColumnCoefficient}
+              onChange={(e) => set("missingColumnCoefficient", Number(e.target.value))} />
+          </Field>
+          <Field label="Extra Row">
+            <Input type="number" step="0.5" value={config.extraRowCoefficient}
+              onChange={(e) => set("extraRowCoefficient", Number(e.target.value))} />
+          </Field>
+          <Field label="Missing Row">
+            <Input type="number" step="0.5" value={config.missingRowCoefficient}
+              onChange={(e) => set("missingRowCoefficient", Number(e.target.value))} />
+          </Field>
+          <Field label="Numeric Diff">
+            <Input type="number" step="0.01" value={config.numericDifferenceCoefficient}
+              onChange={(e) => set("numericDifferenceCoefficient", Number(e.target.value))} />
+          </Field>
+          <Field label="Text Diff">
+            <Input type="number" step="0.01" value={config.textDifferenceCoefficient}
+              onChange={(e) => set("textDifferenceCoefficient", Number(e.target.value))} />
+          </Field>
+          <Field label="Empty Cell Diff">
+            <Input type="number" step="0.01" value={config.emptyCellDifferenceCoefficient}
+              onChange={(e) => set("emptyCellDifferenceCoefficient", Number(e.target.value))} />
+          </Field>
+        </div>
+      </div>
     </div>
   );
 }

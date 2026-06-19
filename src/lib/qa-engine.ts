@@ -69,6 +69,16 @@ export interface QAConfig {
   shiftDetectionThreshold: number; // 0.8
   headerPenalty: number; // 3
   strictMode: "AUTO" | "ON" | "OFF";
+  // Audit-grade weighted penalty coefficients
+  extraTableCoefficient: number;
+  missingTableCoefficient: number;
+  extraColumnCoefficient: number;
+  missingColumnCoefficient: number;
+  extraRowCoefficient: number;
+  missingRowCoefficient: number;
+  numericDifferenceCoefficient: number;
+  textDifferenceCoefficient: number;
+  emptyCellDifferenceCoefficient: number;
 }
 
 export const DEFAULT_CONFIG: QAConfig = {
@@ -80,6 +90,15 @@ export const DEFAULT_CONFIG: QAConfig = {
   shiftDetectionThreshold: 0.8,
   headerPenalty: 3,
   strictMode: "AUTO",
+  extraTableCoefficient: 50,
+  missingTableCoefficient: 100,
+  extraColumnCoefficient: 5,
+  missingColumnCoefficient: 10,
+  extraRowCoefficient: 1,
+  missingRowCoefficient: 2,
+  numericDifferenceCoefficient: 0.1,
+  textDifferenceCoefficient: 0.1,
+  emptyCellDifferenceCoefficient: 0.05,
 };
 
 export const SEVERITY_PENALTY: Record<Severity, number> = {
@@ -999,6 +1018,19 @@ export interface WorkbookReport {
     workloadHours: number;
     bySeverity: Record<Severity, number>;
     byClass: Record<string, number>;
+    // Audit-grade weighted scoring
+    structuralPenalty: number;
+    dataPenalty: number;
+    structuralScore: number;
+    dataScore: number;
+    finalAuditScore: number;
+    auditBreakdown: Array<{
+      label: string;
+      kind: "structural" | "data";
+      count: number;
+      coefficient: number;
+      penalty: number;
+    }>;
   };
   grade: { label: string; tier: number; rationale: string[] };
   patterns: {
@@ -1099,6 +1131,44 @@ export function compareWorkbooks(
   // Patterns
   const patterns = detectPatterns(allErrors);
 
+  // ---------- Audit-grade weighted scoring ----------
+  const NUMERIC_CLASSES = ["Missing Digit","Extra Digit","Digit Transposition","Digit Substitution","Numeric Difference"];
+  const TEXT_CLASSES = ["Text Typo","Major Text Difference","Minor Variation","Range Inversion","Range Boundary","Range Representation","Header Mismatch"];
+  const EMPTY_CLASSES = ["Missing Value","Extra Value","Missing Cell","Extra Cell"];
+  const cnt = (k: string) => byClass[k] ?? 0;
+  const sumCls = (arr: string[]) => arr.reduce((s, k) => s + cnt(k), 0);
+
+  // Treat continuation merges (split/merge reconciliation) as NOT extra/missing tables.
+  // Only excluded sheets that truly have no counterpart count as structural table defects.
+  const missingTables = excluded.filter((e) => /Missing in Employee/.test(e.reason)).length;
+  const extraTables = excluded.filter((e) => /Missing in Reviewer/.test(e.reason)).length;
+  const missingCols = cnt("Missing Column");
+  const extraCols = cnt("Extra Column");
+  const missingRows = cnt("Missing Row");
+  const extraRows = cnt("Extra Row");
+  const numericDiffs = sumCls(NUMERIC_CLASSES);
+  const textDiffs = sumCls(TEXT_CLASSES);
+  const emptyDiffs = sumCls(EMPTY_CLASSES);
+
+  const auditBreakdown: WorkbookReport["totals"]["auditBreakdown"] = [
+    { label: "Extra Tables", kind: "structural", count: extraTables, coefficient: config.extraTableCoefficient, penalty: extraTables * config.extraTableCoefficient },
+    { label: "Missing Tables", kind: "structural", count: missingTables, coefficient: config.missingTableCoefficient, penalty: missingTables * config.missingTableCoefficient },
+    { label: "Extra Columns", kind: "structural", count: extraCols, coefficient: config.extraColumnCoefficient, penalty: extraCols * config.extraColumnCoefficient },
+    { label: "Missing Columns", kind: "structural", count: missingCols, coefficient: config.missingColumnCoefficient, penalty: missingCols * config.missingColumnCoefficient },
+    { label: "Extra Rows", kind: "structural", count: extraRows, coefficient: config.extraRowCoefficient, penalty: extraRows * config.extraRowCoefficient },
+    { label: "Missing Rows", kind: "structural", count: missingRows, coefficient: config.missingRowCoefficient, penalty: missingRows * config.missingRowCoefficient },
+    { label: "Numeric Differences", kind: "data", count: numericDiffs, coefficient: config.numericDifferenceCoefficient, penalty: numericDiffs * config.numericDifferenceCoefficient },
+    { label: "Text Differences", kind: "data", count: textDiffs, coefficient: config.textDifferenceCoefficient, penalty: textDiffs * config.textDifferenceCoefficient },
+    { label: "Empty Cell Differences", kind: "data", count: emptyDiffs, coefficient: config.emptyCellDifferenceCoefficient, penalty: emptyDiffs * config.emptyCellDifferenceCoefficient },
+  ];
+
+  const structuralPenalty = auditBreakdown.filter((r) => r.kind === "structural").reduce((s, r) => s + r.penalty, 0);
+  const dataPenalty = auditBreakdown.filter((r) => r.kind === "data").reduce((s, r) => s + r.penalty, 0);
+  const clamp = (n: number) => Math.max(0, Math.min(100, n));
+  const structuralScore = clamp(100 - structuralPenalty);
+  const dataScore = clamp(100 - dataPenalty);
+  const finalAuditScore = clamp(structuralScore * 0.4 + dataScore * 0.6);
+
   return {
     config, strictMode: strict, sheets, excludedSheets: excluded,
     totals: {
@@ -1106,6 +1176,9 @@ export function compareWorkbooks(
       baseAccuracy: Math.max(0, baseAccuracy),
       weightedAccuracy: Math.max(0, weightedAccuracy),
       errorRatePer10k, workloadHours, bySeverity, byClass,
+      structuralPenalty, dataPenalty,
+      structuralScore, dataScore, finalAuditScore,
+      auditBreakdown,
     },
     grade, patterns,
     metadata: {
