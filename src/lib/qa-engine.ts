@@ -69,6 +69,16 @@ export interface QAConfig {
   shiftDetectionThreshold: number; // 0.8
   headerPenalty: number; // 3
   strictMode: "AUTO" | "ON" | "OFF";
+  // Audit-grade weighted penalty coefficients
+  extraTableCoefficient: number;
+  missingTableCoefficient: number;
+  extraColumnCoefficient: number;
+  missingColumnCoefficient: number;
+  extraRowCoefficient: number;
+  missingRowCoefficient: number;
+  numericDifferenceCoefficient: number;
+  textDifferenceCoefficient: number;
+  emptyCellDifferenceCoefficient: number;
 }
 
 export const DEFAULT_CONFIG: QAConfig = {
@@ -80,6 +90,15 @@ export const DEFAULT_CONFIG: QAConfig = {
   shiftDetectionThreshold: 0.8,
   headerPenalty: 3,
   strictMode: "AUTO",
+  extraTableCoefficient: 50,
+  missingTableCoefficient: 100,
+  extraColumnCoefficient: 5,
+  missingColumnCoefficient: 10,
+  extraRowCoefficient: 1,
+  missingRowCoefficient: 2,
+  numericDifferenceCoefficient: 0.1,
+  textDifferenceCoefficient: 0.1,
+  emptyCellDifferenceCoefficient: 0.05,
 };
 
 export const SEVERITY_PENALTY: Record<Severity, number> = {
