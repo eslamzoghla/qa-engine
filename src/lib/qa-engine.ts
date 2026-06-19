@@ -375,10 +375,16 @@ function detectShifts(
   gridA: string[][], gridB: string[][], cfg: QAConfig,
 ): Set<string> {
   const shiftCells = new Set<string>();
-  // Column shifts only — row shifts are now handled by alignRows()
+  // Column shifts — row shifts handled by alignRows().
+  // Expanded window: ±1..±5 (was ±1..±2) so larger offsets are detected.
+  // For each candidate offset we require both a minimum number of compared
+  // cells and ≥ threshold matches before classifying. Best-confidence offset
+  // wins per column to avoid double-flagging.
   const cols = Math.max(...gridA.map((r) => r.length), ...gridB.map((r) => r.length), 0);
+  const OFFSETS = [-1, 1, -2, 2, -3, 3, -4, 4, -5, 5];
   for (let c = 0; c < cols; c++) {
-    for (const offset of [-1, 1, -2, 2]) {
+    let best: { offset: number; conf: number; compared: number } | null = null;
+    for (const offset of OFFSETS) {
       const c2 = c + offset;
       if (c2 < 0) continue;
       let matches = 0, compared = 0;
@@ -390,9 +396,14 @@ function detectShifts(
         compared++;
         if (normalizeText(a) === normalizeText(b)) matches++;
       }
-      if (compared >= cfg.minimumShiftCells && matches / compared >= cfg.shiftDetectionThreshold) {
-        for (let r = 0; r < len; r++) shiftCells.add(`${r},${c}`);
-      }
+      if (compared < cfg.minimumShiftCells) continue;
+      const conf = matches / compared;
+      if (conf < cfg.shiftDetectionThreshold) continue;
+      if (!best || conf > best.conf) best = { offset, conf, compared };
+    }
+    if (best) {
+      const len = Math.min(gridA.length, gridB.length);
+      for (let r = 0; r < len; r++) shiftCells.add(`${r},${c}`);
     }
   }
   return shiftCells;
