@@ -907,8 +907,11 @@ function classifyCell(
   const an = tryParseNumber(a), bn = tryParseNumber(b);
   if (an !== null && bn !== null && !strict) {
     const diff = Math.abs(an - bn);
+    // Percentage mode: cfg.numericTolerance is interpreted as percent-points
+    // when > 1 (e.g. 5 → 5%), or as a fraction when ≤ 1 (e.g. 0.05 → 5%).
+    // Both representations resolve to the same fractional tolerance.
     const tol = cfg.numericToleranceMode === "PERCENTAGE"
-      ? Math.abs(bn) * cfg.numericTolerance
+      ? Math.abs(bn) * (cfg.numericTolerance > 1 ? cfg.numericTolerance / 100 : cfg.numericTolerance)
       : cfg.numericTolerance;
     if (diff <= tol) return "match";
   }
