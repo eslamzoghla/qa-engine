@@ -87,7 +87,78 @@ export function Scorecard() {
               sub="reviewer remediation" />
       </div>
 
+      <AuditScorePanel report={report} />
+      <AuditBreakdownPanel report={report} />
       <StructuralPanel report={report} />
+    </div>
+  );
+}
+
+function AuditScorePanel({ report }: { report: NonNullable<ReturnType<typeof useQA>["report"]> }) {
+  const t = report.totals;
+  const toneScore = (n: number) => n >= 90 ? "text-success" : n >= 70 ? "text-medium" : "text-critical";
+  return (
+    <div className="rounded-2xl bg-surface border border-border p-5 shadow-sm">
+      <div className="text-[11px] uppercase tracking-wider text-muted-foreground font-medium mb-3">
+        Audit Score (Structural 40% · Data 60%)
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="rounded-xl border border-border bg-surface-2/30 p-4">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Structural Score</div>
+          <div className={`text-3xl font-bold tabular-nums ${toneScore(t.structuralScore)}`}>{t.structuralScore.toFixed(1)}</div>
+          <div className="text-xs text-muted-foreground mt-1">Penalty: {t.structuralPenalty.toFixed(2)}</div>
+        </div>
+        <div className="rounded-xl border border-border bg-surface-2/30 p-4">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Data Score</div>
+          <div className={`text-3xl font-bold tabular-nums ${toneScore(t.dataScore)}`}>{t.dataScore.toFixed(1)}</div>
+          <div className="text-xs text-muted-foreground mt-1">Penalty: {t.dataPenalty.toFixed(2)}</div>
+        </div>
+        <div className="rounded-xl border border-primary/40 bg-primary/5 p-4">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Final Audit Score</div>
+          <div className={`text-4xl font-bold tabular-nums ${toneScore(t.finalAuditScore)}`}>{t.finalAuditScore.toFixed(2)}</div>
+          <div className="text-xs text-muted-foreground mt-1">Total penalty: {(t.structuralPenalty + t.dataPenalty).toFixed(2)}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AuditBreakdownPanel({ report }: { report: NonNullable<ReturnType<typeof useQA>["report"]> }) {
+  const rows = report.totals.auditBreakdown;
+  return (
+    <div className="rounded-2xl bg-surface border border-border p-5 shadow-sm">
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <div className="text-[11px] uppercase tracking-wider text-muted-foreground font-medium">Audit Summary</div>
+          <div className="text-xs text-muted-foreground mt-0.5">Count × Coefficient = Penalty Contribution</div>
+        </div>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-[10px] uppercase tracking-wider text-muted-foreground border-b border-border">
+              <th className="text-left py-2 font-medium">Category</th>
+              <th className="text-left py-2 font-medium">Type</th>
+              <th className="text-right py-2 font-medium">Count</th>
+              <th className="text-right py-2 font-medium">Coefficient</th>
+              <th className="text-right py-2 font-medium">Penalty</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.label} className="border-b border-border/40">
+                <td className="py-2">{r.label}</td>
+                <td className="py-2 text-xs text-muted-foreground capitalize">{r.kind}</td>
+                <td className="py-2 text-right tabular-nums">{r.count}</td>
+                <td className="py-2 text-right tabular-nums text-muted-foreground">{r.coefficient}</td>
+                <td className={`py-2 text-right tabular-nums font-medium ${r.penalty > 0 ? "text-critical" : "text-muted-foreground"}`}>
+                  {r.penalty.toFixed(2)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
