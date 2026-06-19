@@ -166,28 +166,74 @@ export function parseRange(s: string): [string, string, string] | null {
 }
 
 // ---------- Similarity ----------
+// Full Levenshtein is O(n*m); we short-circuit obvious cases and use bounded
+// banded DP so similarity stays fast for enterprise-sized workbooks.
 
 export function levenshtein(a: string, b: string): number {
   if (a === b) return 0;
   if (!a.length) return b.length;
   if (!b.length) return a.length;
-  const dp = Array.from({ length: b.length + 1 }, (_, i) => i);
-  for (let i = 1; i <= a.length; i++) {
-    let prev = dp[0];
-    dp[0] = i;
-    for (let j = 1; j <= b.length; j++) {
-      const tmp = dp[j];
-      dp[j] = a[i - 1] === b[j - 1] ? prev : 1 + Math.min(prev, dp[j], dp[j - 1]);
-      prev = tmp;
+  return boundedLevenshtein(a, b, Math.max(a.length, b.length));
+}
+
+/** Banded Levenshtein with early-exit when distance exceeds `maxDistance`. */
+export function boundedLevenshtein(a: string, b: string, maxDistance: number): number {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  if (b.length > a.length) { const t = a; a = b; b = t; }
+  const n = a.length, m = b.length;
+  if (n - m > maxDistance) return maxDistance + 1;
+  let prev = new Uint32Array(m + 1);
+  let curr = new Uint32Array(m + 1);
+  for (let j = 0; j <= m; j++) prev[j] = j;
+  for (let i = 1; i <= n; i++) {
+    curr[0] = i;
+    let rowMin = i;
+    const jStart = Math.max(1, i - maxDistance);
+    const jEnd = Math.min(m, i + maxDistance);
+    if (jStart > 1) curr[jStart - 1] = maxDistance + 1;
+    for (let j = jStart; j <= jEnd; j++) {
+      const cost = a.charCodeAt(i - 1) === b.charCodeAt(j - 1) ? 0 : 1;
+      const del = prev[j] + 1;
+      const ins = curr[j - 1] + 1;
+      const sub = prev[j - 1] + cost;
+      let v = del < ins ? del : ins;
+      if (sub < v) v = sub;
+      curr[j] = v;
+      if (v < rowMin) rowMin = v;
     }
+    if (rowMin > maxDistance) return maxDistance + 1;
+    const tmp = prev; prev = curr; curr = tmp;
   }
-  return dp[b.length];
+  return prev[m];
+}
+
+function tokenJaccard(a: string, b: string): number {
+  const ta = new Set(a.toLowerCase().split(/\W+/).filter(Boolean));
+  const tb = new Set(b.toLowerCase().split(/\W+/).filter(Boolean));
+  if (!ta.size && !tb.size) return 1;
+  let inter = 0;
+  for (const t of ta) if (tb.has(t)) inter++;
+  const union = ta.size + tb.size - inter;
+  return union ? inter / union : 0;
 }
 
 export function similarity(a: string, b: string): number {
-  const maxLen = Math.max(a.length, b.length);
-  if (!maxLen) return 1;
-  return 1 - levenshtein(a, b) / maxLen;
+  if (a === b) return 1;
+  const la = a.length, lb = b.length;
+  if (!la && !lb) return 1;
+  if (!la || !lb) return 0;
+  const maxLen = la > lb ? la : lb;
+  const minLen = la > lb ? lb : la;
+  // Fast-path: length disparity > 50% — clearly unrelated, skip DP.
+  if ((maxLen - minLen) / maxLen > 0.5) return (minLen / maxLen) * 0.4;
+  // Fast-path: very long strings → cheaper token Jaccard.
+  if (maxLen > 200) return tokenJaccard(a, b);
+  const cap = Math.max(1, Math.ceil(maxLen * 0.4));
+  const d = boundedLevenshtein(a, b, cap);
+  if (d > cap) return 1 - (cap + 1) / maxLen;
+  return 1 - d / maxLen;
 }
 
 // ---------- Digit-level classifiers ----------
