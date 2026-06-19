@@ -23,9 +23,12 @@ export function ConfigPanel() {
           <Input type="number" value={config.numericMajorAbsolute}
             onChange={(e) => set("numericMajorAbsolute", Number(e.target.value))} />
         </Field>
-        <Field label="Numeric tolerance">
-          <Input type="number" step="0.01" value={config.numericTolerance}
-            onChange={(e) => set("numericTolerance", Number(e.target.value))} />
+        <Field
+          label="Numeric tolerance"
+          hint={config.numericToleranceMode === "PERCENTAGE" ? "Percent — e.g. 5 = 5% (or 0.05)" : "Absolute Δ"}
+        >
+          <Input type="number" step="0.01" min={0} value={config.numericTolerance}
+            onChange={(e) => set("numericTolerance", Math.max(0, Number(e.target.value)))} />
         </Field>
         <Field label="Tolerance mode">
           <Select value={config.numericToleranceMode} onValueChange={(v) => set("numericToleranceMode", v as any)}>
