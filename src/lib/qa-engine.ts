@@ -440,8 +440,11 @@ function alignRows(
 
   const n = sigA.length, m = sigB.length;
 
-  // Fallback for very large sheets — identity alignment, lets old shift detector handle it
-  if (n * m > 2_000_000) {
+  // Fallback for very large sheets — keep memory bounded.
+  // Original cap of 2,000,000 (≈4 MB Uint32 grid) was too generous for
+  // enterprise workbooks with 50k+ rows: it caused browser tab freezes.
+  // 500,000 keeps the worst-case DP allocation under ~1 MB.
+  if (n * m > 500_000) {
     const max = Math.max(n, m);
     for (let i = 0; i < max; i++) {
       ops.push({
