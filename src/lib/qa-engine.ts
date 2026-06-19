@@ -1094,6 +1094,16 @@ export interface WorkbookReport {
       coefficient: number;
       penalty: number;
     }>;
+    // Enterprise compliance reporting
+    compliance: {
+      complianceScore: number;
+      riskScore: number;
+      grade: "A" | "B" | "C" | "D";
+      gradeLabel: string;
+      executiveSummary: string;
+      topFindings: ErrorRecord[];
+      recommendations: string[];
+    };
   };
   grade: { label: string; tier: number; rationale: string[] };
   patterns: {
