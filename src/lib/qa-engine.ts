@@ -1270,18 +1270,33 @@ export function compareWorkbooks(
     { label: "Empty Cell Differences", kind: "data", count: emptyDiffs, coefficient: config.emptyCellDifferenceCoefficient, penalty: emptyDiffs * config.emptyCellDifferenceCoefficient },
   ];
 
-  const structuralPenalty = auditBreakdown.filter((r) => r.kind === "structural").reduce((s, r) => s + r.penalty, 0);
-  const dataPenalty = auditBreakdown.filter((r) => r.kind === "data").reduce((s, r) => s + r.penalty, 0);
-  const clamp = (n: number) => Math.max(0, Math.min(100, n));
-  const structuralScore = clamp(100 - structuralPenalty);
-  const dataScore = clamp(100 - dataPenalty);
-  const finalAuditScore = clamp(structuralScore * 0.4 + dataScore * 0.6);
+  const structuralPenalty = auditBreakdown
+    .filter((r) => r.kind === "structural")
+    .reduce((s, r) => s + r.penalty, 0);
+  const dataPenalty = auditBreakdown
+    .filter((r) => r.kind === "data")
+    .reduce((s, r) => s + r.penalty, 0);
+
+  // Saturating curve: score = 100 * exp(-penalty / scale).
+  // A linear `100 - penalty` collapsed the score when a single structural
+  // defect (e.g. coefficient 50) was logged. The exponential curve degrades
+  // gracefully — one defect costs a few points; many defects asymptote
+  // toward zero without ever crossing it.
+  const scale = Math.max(20, sheets.length * 5 + comparedCells / 2000);
+  const saturate = (penalty: number) => 100 * Math.exp(-Math.max(0, penalty) / scale);
+  const structuralScore = saturate(structuralPenalty);
+  const dataScore = saturate(dataPenalty);
+  // 50/50 blend (was 40/60). Structural and data quality are treated as
+  // equally important pillars of compliance.
+  const finalAuditScore = Math.max(1, Math.min(100, structuralScore * 0.5 + dataScore * 0.5));
 
   // ---------- Compliance / Risk ----------
   const compliance = buildCompliance(
     finalAuditScore, structuralScore, dataScore, bySeverity, byClass, allErrors,
     sheets.length, comparedCells,
+    { structuralPenalty, dataPenalty, scale },
   );
+
 
   return {
     config, strictMode: strict, sheets, excludedSheets: excluded,
