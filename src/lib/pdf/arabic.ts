@@ -12,13 +12,9 @@
 // The result must be drawn LTR by jsPDF (no R2L flag) because we already
 // produced visually-ordered text.
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const reshaper: { ArabicShaper: { convertArabic: (s: string) => string } } =
-  // @ts-expect-error untyped CJS module
-  await import("arabic-persian-reshaper");
+import { ArabicShaper } from "arabic-persian-reshaper";
+import bidiFactory from "bidi-js";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const bidiFactory: any = (await import("bidi-js")).default;
 const bidi = bidiFactory();
 
 // Hebrew + Arabic + Arabic Supplement + Arabic Extended + Arabic Presentation Forms
@@ -37,7 +33,7 @@ export function shapeForPdf(text: string | undefined | null): string {
   const s = String(text);
   if (!containsRTL(s)) return s;
   try {
-    const reshaped = reshaper.ArabicShaper.convertArabic(s);
+    const reshaped = ArabicShaper.convertArabic(s);
     const levels = bidi.getEmbeddingLevels(reshaped, "rtl");
     return bidi.getReorderedString(reshaped, levels);
   } catch {
