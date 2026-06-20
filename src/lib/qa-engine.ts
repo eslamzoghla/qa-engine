@@ -90,12 +90,17 @@ export const DEFAULT_CONFIG: QAConfig = {
   shiftDetectionThreshold: 0.8,
   headerPenalty: 3,
   strictMode: "AUTO",
-  extraTableCoefficient: 50,
-  missingTableCoefficient: 100,
-  extraColumnCoefficient: 5,
-  missingColumnCoefficient: 10,
-  extraRowCoefficient: 1,
-  missingRowCoefficient: 2,
+  // Rebalanced (v2) — old linear penalties caused one structural defect to
+  // collapse the score to ~23 even when 95%+ of cells matched. The compliance
+  // engine now applies a saturating curve (see buildCompliance), so the raw
+  // coefficients here represent "penalty points" rather than score-percent
+  // points and can stay informative without being catastrophic.
+  extraTableCoefficient: 10,
+  missingTableCoefficient: 15,
+  extraColumnCoefficient: 3,
+  missingColumnCoefficient: 3,
+  extraRowCoefficient: 0.5,
+  missingRowCoefficient: 0.5,
   numericDifferenceCoefficient: 0.1,
   textDifferenceCoefficient: 0.1,
   emptyCellDifferenceCoefficient: 0.05,
@@ -861,18 +866,36 @@ export function compareSheet(
     });
   }
 
-  // Column Shift fallback only when column alignment failed
+  // Column Shift fallback only when column alignment failed.
+  // Adjacent shifted columns are grouped into a single "Columns N:U shifted"
+  // record so reports surface one block instead of one row per column.
   if (!useColAlign && shiftCells.size > 0) {
     const byCol = new Map<number, number>();
     for (const k of shiftCells) {
       const c = Number(k.split(",")[1]);
       byCol.set(c, (byCol.get(c) ?? 0) + 1);
     }
-    for (const [c, size] of byCol) {
+    const sortedCols = [...byCol.keys()].sort((a, b) => a - b);
+    const blocks: Array<{ start: number; end: number; cells: number }> = [];
+    for (const c of sortedCols) {
+      const last = blocks[blocks.length - 1];
+      if (last && c === last.end + 1) {
+        last.end = c;
+        last.cells += byCol.get(c) ?? 0;
+      } else {
+        blocks.push({ start: c, end: c, cells: byCol.get(c) ?? 0 });
+      }
+    }
+    for (const blk of blocks) {
+      const single = blk.start === blk.end;
+      const range = single
+        ? colLetter(blk.start)
+        : `${colLetter(blk.start)}:${colLetter(blk.end)}`;
       errors.push({
-        sheet: name, row: 0, col: c,
-        cellRef: `${colLetter(c)}1`,
-        expected: `(${size} cells)`, actual: `column shift block`,
+        sheet: name, row: 0, col: blk.start,
+        cellRef: `${colLetter(blk.start)}1`,
+        expected: `(${blk.cells} cells across ${blk.end - blk.start + 1} column${single ? "" : "s"})`,
+        actual: single ? `Column ${range} shifted` : `Columns ${range} shifted`,
         normalizedExpected: "",
         normalizedActual: "",
         similarityPct: 0,
@@ -880,10 +903,13 @@ export function compareSheet(
         severity: "CRITICAL",
         penalty: SEVERITY_PENALTY.CRITICAL,
         isHeader: false,
-        note: "Column alignment could not be recovered — block-level structural shift.",
+        note: single
+          ? "Column alignment could not be recovered — block-level structural shift."
+          : `Adjacent column shifts grouped (${range}). One root cause instead of ${blk.end - blk.start + 1} cascaded errors.`,
       });
     }
   }
+
 
 
   return {
@@ -1095,6 +1121,7 @@ export interface WorkbookReport {
       penalty: number;
     }>;
     // Enterprise compliance reporting
+    // Enterprise compliance reporting
     compliance: {
       complianceScore: number;
       riskScore: number;
@@ -1103,6 +1130,14 @@ export interface WorkbookReport {
       executiveSummary: string;
       topFindings: ErrorRecord[];
       recommendations: string[];
+      scoreFormula: string;
+      scoreInputs: {
+        structuralPenalty: number;
+        dataPenalty: number;
+        scale: number;
+        sheetsCount: number;
+        cellsCompared: number;
+      };
     };
   };
   grade: { label: string; tier: number; rationale: string[] };
@@ -1235,18 +1270,33 @@ export function compareWorkbooks(
     { label: "Empty Cell Differences", kind: "data", count: emptyDiffs, coefficient: config.emptyCellDifferenceCoefficient, penalty: emptyDiffs * config.emptyCellDifferenceCoefficient },
   ];
 
-  const structuralPenalty = auditBreakdown.filter((r) => r.kind === "structural").reduce((s, r) => s + r.penalty, 0);
-  const dataPenalty = auditBreakdown.filter((r) => r.kind === "data").reduce((s, r) => s + r.penalty, 0);
-  const clamp = (n: number) => Math.max(0, Math.min(100, n));
-  const structuralScore = clamp(100 - structuralPenalty);
-  const dataScore = clamp(100 - dataPenalty);
-  const finalAuditScore = clamp(structuralScore * 0.4 + dataScore * 0.6);
+  const structuralPenalty = auditBreakdown
+    .filter((r) => r.kind === "structural")
+    .reduce((s, r) => s + r.penalty, 0);
+  const dataPenalty = auditBreakdown
+    .filter((r) => r.kind === "data")
+    .reduce((s, r) => s + r.penalty, 0);
+
+  // Saturating curve: score = 100 * exp(-penalty / scale).
+  // A linear `100 - penalty` collapsed the score when a single structural
+  // defect (e.g. coefficient 50) was logged. The exponential curve degrades
+  // gracefully — one defect costs a few points; many defects asymptote
+  // toward zero without ever crossing it.
+  const scale = Math.max(20, sheets.length * 5 + comparedCells / 2000);
+  const saturate = (penalty: number) => 100 * Math.exp(-Math.max(0, penalty) / scale);
+  const structuralScore = saturate(structuralPenalty);
+  const dataScore = saturate(dataPenalty);
+  // 50/50 blend (was 40/60). Structural and data quality are treated as
+  // equally important pillars of compliance.
+  const finalAuditScore = Math.max(1, Math.min(100, structuralScore * 0.5 + dataScore * 0.5));
 
   // ---------- Compliance / Risk ----------
   const compliance = buildCompliance(
     finalAuditScore, structuralScore, dataScore, bySeverity, byClass, allErrors,
     sheets.length, comparedCells,
+    { structuralPenalty, dataPenalty, scale },
   );
+
 
   return {
     config, strictMode: strict, sheets, excludedSheets: excluded,
@@ -1277,6 +1327,7 @@ function buildCompliance(
   allErrors: ErrorRecord[],
   sheetsCount: number,
   comparedCells: number,
+  penalties: { structuralPenalty: number; dataPenalty: number; scale: number },
 ): WorkbookReport["totals"]["compliance"] {
   const complianceScore = finalAuditScore;
   const criticalPressure = Math.min(20, bySeverity.CRITICAL * 2);
@@ -1318,9 +1369,24 @@ function buildCompliance(
     `Structural integrity ${structuralScore.toFixed(1)}/100 · Data quality ${dataScore.toFixed(1)}/100. ` +
     `Risk score ${riskScore.toFixed(1)}/100${bySeverity.CRITICAL > 0 ? ` — ${bySeverity.CRITICAL} critical incident(s) require immediate remediation.` : "."}`;
 
+  const scoreFormula =
+    `Score = 100·exp(−penalty / scale), blended 50/50 structural+data. ` +
+    `scale = max(20, sheets·5 + cells/2000) = ${penalties.scale.toFixed(2)}. ` +
+    `Structural = 100·exp(−${penalties.structuralPenalty.toFixed(2)} / ${penalties.scale.toFixed(2)}) = ${structuralScore.toFixed(2)}. ` +
+    `Data = 100·exp(−${penalties.dataPenalty.toFixed(2)} / ${penalties.scale.toFixed(2)}) = ${dataScore.toFixed(2)}. ` +
+    `Final = 0.5·${structuralScore.toFixed(2)} + 0.5·${dataScore.toFixed(2)} = ${complianceScore.toFixed(2)}.`;
+
   return {
     complianceScore, riskScore, grade, gradeLabel,
     executiveSummary: exec, topFindings, recommendations,
+    scoreFormula,
+    scoreInputs: {
+      structuralPenalty: penalties.structuralPenalty,
+      dataPenalty: penalties.dataPenalty,
+      scale: penalties.scale,
+      sheetsCount,
+      cellsCompared: comparedCells,
+    },
   };
 }
 

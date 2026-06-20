@@ -122,6 +122,12 @@ function CompliancePanel({ report }: { report: NonNullable<ReturnType<typeof use
           </div>
         </div>
       </div>
+      <details className="mt-3 text-[11px] text-muted-foreground">
+        <summary className="cursor-pointer hover:text-foreground select-none">
+          How is this score calculated?
+        </summary>
+        <p className="mt-2 leading-relaxed font-mono whitespace-pre-wrap">{c.scoreFormula}</p>
+      </details>
       {c.recommendations.length > 0 && (
         <div className="mt-4">
           <div className="text-[11px] uppercase tracking-wider text-muted-foreground font-medium mb-1">Recommendations</div>
