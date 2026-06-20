@@ -90,12 +90,17 @@ export const DEFAULT_CONFIG: QAConfig = {
   shiftDetectionThreshold: 0.8,
   headerPenalty: 3,
   strictMode: "AUTO",
-  extraTableCoefficient: 50,
-  missingTableCoefficient: 100,
-  extraColumnCoefficient: 5,
-  missingColumnCoefficient: 10,
-  extraRowCoefficient: 1,
-  missingRowCoefficient: 2,
+  // Rebalanced (v2) — old linear penalties caused one structural defect to
+  // collapse the score to ~23 even when 95%+ of cells matched. The compliance
+  // engine now applies a saturating curve (see buildCompliance), so the raw
+  // coefficients here represent "penalty points" rather than score-percent
+  // points and can stay informative without being catastrophic.
+  extraTableCoefficient: 10,
+  missingTableCoefficient: 15,
+  extraColumnCoefficient: 3,
+  missingColumnCoefficient: 3,
+  extraRowCoefficient: 0.5,
+  missingRowCoefficient: 0.5,
   numericDifferenceCoefficient: 0.1,
   textDifferenceCoefficient: 0.1,
   emptyCellDifferenceCoefficient: 0.05,
