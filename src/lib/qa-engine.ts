@@ -866,18 +866,36 @@ export function compareSheet(
     });
   }
 
-  // Column Shift fallback only when column alignment failed
+  // Column Shift fallback only when column alignment failed.
+  // Adjacent shifted columns are grouped into a single "Columns N:U shifted"
+  // record so reports surface one block instead of one row per column.
   if (!useColAlign && shiftCells.size > 0) {
     const byCol = new Map<number, number>();
     for (const k of shiftCells) {
       const c = Number(k.split(",")[1]);
       byCol.set(c, (byCol.get(c) ?? 0) + 1);
     }
-    for (const [c, size] of byCol) {
+    const sortedCols = [...byCol.keys()].sort((a, b) => a - b);
+    const blocks: Array<{ start: number; end: number; cells: number }> = [];
+    for (const c of sortedCols) {
+      const last = blocks[blocks.length - 1];
+      if (last && c === last.end + 1) {
+        last.end = c;
+        last.cells += byCol.get(c) ?? 0;
+      } else {
+        blocks.push({ start: c, end: c, cells: byCol.get(c) ?? 0 });
+      }
+    }
+    for (const blk of blocks) {
+      const single = blk.start === blk.end;
+      const range = single
+        ? colLetter(blk.start)
+        : `${colLetter(blk.start)}:${colLetter(blk.end)}`;
       errors.push({
-        sheet: name, row: 0, col: c,
-        cellRef: `${colLetter(c)}1`,
-        expected: `(${size} cells)`, actual: `column shift block`,
+        sheet: name, row: 0, col: blk.start,
+        cellRef: `${colLetter(blk.start)}1`,
+        expected: `(${blk.cells} cells across ${blk.end - blk.start + 1} column${single ? "" : "s"})`,
+        actual: single ? `Column ${range} shifted` : `Columns ${range} shifted`,
         normalizedExpected: "",
         normalizedActual: "",
         similarityPct: 0,
@@ -885,10 +903,13 @@ export function compareSheet(
         severity: "CRITICAL",
         penalty: SEVERITY_PENALTY.CRITICAL,
         isHeader: false,
-        note: "Column alignment could not be recovered — block-level structural shift.",
+        note: single
+          ? "Column alignment could not be recovered — block-level structural shift."
+          : `Adjacent column shifts grouped (${range}). One root cause instead of ${blk.end - blk.start + 1} cascaded errors.`,
       });
     }
   }
+
 
 
   return {
