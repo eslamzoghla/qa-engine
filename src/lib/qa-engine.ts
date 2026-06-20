@@ -1327,6 +1327,7 @@ function buildCompliance(
   allErrors: ErrorRecord[],
   sheetsCount: number,
   comparedCells: number,
+  penalties: { structuralPenalty: number; dataPenalty: number; scale: number },
 ): WorkbookReport["totals"]["compliance"] {
   const complianceScore = finalAuditScore;
   const criticalPressure = Math.min(20, bySeverity.CRITICAL * 2);
@@ -1368,9 +1369,24 @@ function buildCompliance(
     `Structural integrity ${structuralScore.toFixed(1)}/100 · Data quality ${dataScore.toFixed(1)}/100. ` +
     `Risk score ${riskScore.toFixed(1)}/100${bySeverity.CRITICAL > 0 ? ` — ${bySeverity.CRITICAL} critical incident(s) require immediate remediation.` : "."}`;
 
+  const scoreFormula =
+    `Score = 100·exp(−penalty / scale), blended 50/50 structural+data. ` +
+    `scale = max(20, sheets·5 + cells/2000) = ${penalties.scale.toFixed(2)}. ` +
+    `Structural = 100·exp(−${penalties.structuralPenalty.toFixed(2)} / ${penalties.scale.toFixed(2)}) = ${structuralScore.toFixed(2)}. ` +
+    `Data = 100·exp(−${penalties.dataPenalty.toFixed(2)} / ${penalties.scale.toFixed(2)}) = ${dataScore.toFixed(2)}. ` +
+    `Final = 0.5·${structuralScore.toFixed(2)} + 0.5·${dataScore.toFixed(2)} = ${complianceScore.toFixed(2)}.`;
+
   return {
     complianceScore, riskScore, grade, gradeLabel,
     executiveSummary: exec, topFindings, recommendations,
+    scoreFormula,
+    scoreInputs: {
+      structuralPenalty: penalties.structuralPenalty,
+      dataPenalty: penalties.dataPenalty,
+      scale: penalties.scale,
+      sheetsCount,
+      cellsCompared: comparedCells,
+    },
   };
 }
 
