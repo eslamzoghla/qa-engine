@@ -25,10 +25,23 @@ export function ConfigPanel() {
         </Field>
         <Field
           label="Numeric tolerance"
-          hint={config.numericToleranceMode === "PERCENTAGE" ? "Percent — e.g. 5 = 5% (or 0.05)" : "Absolute Δ"}
+          hint={config.numericToleranceMode === "PERCENTAGE"
+            ? "Percent — e.g. 5 means ±5% (clamped 0–100)"
+            : "Absolute Δ — e.g. 0.01 means ±0.01"}
         >
-          <Input type="number" step="0.01" min={0} value={config.numericTolerance}
-            onChange={(e) => set("numericTolerance", Math.max(0, Number(e.target.value)))} />
+          <Input
+            type="number"
+            step="0.01"
+            min={0}
+            max={config.numericToleranceMode === "PERCENTAGE" ? 100 : undefined}
+            value={config.numericTolerance}
+            onChange={(e) => {
+              const raw = Number(e.target.value);
+              const max = config.numericToleranceMode === "PERCENTAGE" ? 100 : Number.POSITIVE_INFINITY;
+              const clamped = Math.max(0, Math.min(max, isFinite(raw) ? raw : 0));
+              set("numericTolerance", clamped);
+            }}
+          />
         </Field>
         <Field label="Tolerance mode">
           <Select value={config.numericToleranceMode} onValueChange={(v) => set("numericToleranceMode", v as any)}>
