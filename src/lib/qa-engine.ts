@@ -1100,6 +1100,7 @@ export interface WorkbookReport {
       penalty: number;
     }>;
     // Enterprise compliance reporting
+    // Enterprise compliance reporting
     compliance: {
       complianceScore: number;
       riskScore: number;
@@ -1108,6 +1109,14 @@ export interface WorkbookReport {
       executiveSummary: string;
       topFindings: ErrorRecord[];
       recommendations: string[];
+      scoreFormula: string;
+      scoreInputs: {
+        structuralPenalty: number;
+        dataPenalty: number;
+        scale: number;
+        sheetsCount: number;
+        cellsCompared: number;
+      };
     };
   };
   grade: { label: string; tier: number; rationale: string[] };
